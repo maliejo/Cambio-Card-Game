@@ -60,8 +60,7 @@
 		type="button"
 		class="block aspect-[169/245] w-full rounded-md transition-transform [perspective:600px]
 			{clickable ? 'cursor-pointer hover:-translate-y-1 hover:drop-shadow-lg' : 'cursor-default'}
-			{selected ? 'ring-4 ring-secondary -translate-y-1' : ''}
-			{highlighted ? 'ring-4 ring-primary' : ''}"
+			{selected || highlighted ? '-translate-y-2 scale-105 drop-shadow-[0_10px_12px_rgba(6,1,17,0.45)]' : ''}"
 		disabled={!clickable}
 		aria-label={label(card)}
 		{onclick}

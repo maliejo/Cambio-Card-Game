@@ -4,6 +4,7 @@
 	import FlyingCards from './FlyingCards.svelte';
 	import { client } from '$lib/client/game.svelte';
 	import { cardLocation } from '$lib/client/locations';
+	import { pileCardWidth } from '$lib/client/ui';
 
 	const v = $derived(client.view!);
 	const self = $derived(client.self!);
@@ -66,46 +67,41 @@
 </script>
 
 <div
-	class="grid h-dvh w-screen overflow-hidden"
+	class="grid h-dvh w-screen overflow-hidden pb-[max(0.5rem,env(safe-area-inset-bottom))]"
 	style:grid-template-areas={LAYOUTS[seatedPlayers.length] ?? LAYOUTS[6]}
+	style:grid-auto-rows="minmax(0, 1fr)"
 >
 	{#each seatedPlayers as player, i (player.id)}
 		<Seat {player} area="p{i + 1}" />
 	{/each}
 
-	<div class="flex flex-col items-center justify-center gap-3 p-2" style="grid-area: table">
-		<p class="max-w-md text-center text-sm font-semibold text-dark">{status}</p>
+	<div class="flex flex-col items-center justify-center gap-2 p-2 sm:gap-3" style="grid-area: table">
+		<p class="max-w-md text-center text-xs font-semibold text-dark sm:text-sm">{status}</p>
 
 		{#if v.phase !== 'finished'}
-			<div class="flex items-start gap-4">
+			<div class="flex items-start gap-2 sm:gap-4">
 				<!-- draw pile -->
-				<div class="w-16 text-center sm:w-20" use:cardLocation={'deck'}>
+				<div class="text-center {pileCardWidth()}" use:cardLocation={'deck'}>
 					<PlayingCard
 						card={v.deckCount > 0 ? 'hidden' : null}
 						clickable={canDraw && v.deckCount + v.discardCount > 1}
 						onclick={() => client.send({ method: 'draw', from: 'deck' })}
 					/>
-					<span class="text-xs text-dark/60">deck ({v.deckCount})</span>
-				</div>
-
-				<!-- drawn card (only the holder sees its face) -->
-				<div class="w-16 text-center sm:w-20" use:cardLocation={'drawn'}>
-					{#if v.turnState === 'holding'}
-						<PlayingCard card={v.drawnCard ?? 'hidden'} highlighted />
-						<span class="text-xs text-dark/60">drawn</span>
-					{:else}
-						<div class="aspect-[169/245] w-full"></div>
-					{/if}
+					<span class="text-xs text-dark/60">deck</span>
 				</div>
 
 				<!-- discard pile -->
-				<div class="w-16 text-center sm:w-20" use:cardLocation={'discard'}>
+				<div
+					class="text-center {pileCardWidth()}"
+					style:visibility={client.isFlightTarget('discard') ? 'hidden' : 'visible'}
+					use:cardLocation={'discard'}
+				>
 					<PlayingCard
 						card={v.discardTop}
 						clickable={canDraw && v.discardTop !== null}
 						onclick={() => client.send({ method: 'draw', from: 'discard' })}
 					/>
-					<span class="text-xs text-dark/60">discard ({v.discardCount})</span>
+					<span class="text-xs text-dark/60">discard</span>
 				</div>
 			</div>
 		{/if}
@@ -116,7 +112,7 @@
 					Got it — I'm ready
 				</button>
 			{/if}
-			{#if canDraw && !v.cambioCallerId}
+			{#if canDraw && !v.cambioCallerId && v.cambioAllowed}
 				<button class="btn bg-danger!" onclick={() => client.send({ method: 'cambio' })}>
 					Call Cambio
 				</button>
@@ -146,24 +142,37 @@
 			{/if}
 		</div>
 
+		<!-- game log: inside the table on mobile, where seats never overlap it -->
+		<div class="flex max-w-full flex-col gap-0.5 overflow-hidden sm:hidden">
+			{#each v.log.slice(-3) as entry, i (v.log.length + i)}
+				<span
+					class="truncate text-center text-[10px] leading-tight
+						{entry === v.log.at(-1) ? 'font-medium text-dark/80' : 'text-dark/40'}"
+				>
+					{entry}
+				</span>
+			{/each}
+		</div>
 	</div>
+</div>
+
+<!-- game log: bottom right corner on desktop, where there is plenty of room -->
+<div class="pointer-events-none fixed right-2 bottom-2 hidden w-72 flex-col gap-0.5 text-right sm:flex">
+	{#each v.log.slice(-6) as entry, i (v.log.length + i)}
+		<span class="text-xs {entry === v.log.at(-1) ? 'font-semibold text-dark/80' : 'text-dark/50'}">
+			{entry}
+		</span>
+	{/each}
 </div>
 
 <FlyingCards />
 
-<!-- flip hint, out of the way of the seats -->
-{#if client.showHints && v.phase === 'playing' && !v.pendingGive && v.discardTop && v.selfId !== v.cambioCallerId}
+<!-- flip hint, only while the flip race is open -->
+{#if client.showHints && v.phase === 'playing' && !v.pendingGive && client.flipOpen && v.selfId !== v.cambioCallerId}
 	<div class="fixed bottom-2 left-2 max-w-48 text-left text-xs text-dark/50">
-		Spot a card matching the discard? Click it to flip — wrong flips cost you a card!
+		⚡ Flip race! Tap a card matching the discard — wrong flips cost you a card.
 	</div>
 {/if}
-
-<!-- game log -->
-<div class="pointer-events-none fixed right-2 bottom-2 flex w-64 flex-col gap-0.5 text-right">
-	{#each v.log.slice(-6) as entry, i (v.log.length + i)}
-		<span class="text-xs text-dark/60 {i === 5 ? 'font-semibold text-dark' : ''}">{entry}</span>
-	{/each}
-</div>
 
 <!-- room code -->
 <div class="fixed top-2 left-2 text-xs text-dark/50">
@@ -175,9 +184,9 @@
 		border-radius: var(--radius-md);
 		background: var(--color-primary);
 		color: white;
-		padding: 0.5rem 1rem;
+		padding: 0.4rem 0.8rem;
 		font-weight: 600;
-		font-size: 0.875rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 	}
 	:global(.btn:hover) {

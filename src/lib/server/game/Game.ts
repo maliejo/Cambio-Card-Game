@@ -15,6 +15,8 @@ import type {
 export const MAX_PLAYERS = 6;
 const HAND_SIZE = 4;
 const LOG_LIMIT = 30;
+/** After a discard, players get this long to flip a matching card. */
+const FLIP_WINDOW_MS = 6000;
 
 /** Rule violations and bad requests — the message is safe to show to the player. */
 export class GameError extends Error {}
@@ -44,6 +46,8 @@ export default class Game {
 	pendingGive: { fromId: string; toId: string; toIndex: number } | null = null;
 	/** Who claimed the current discard by flipping correctly first. Resets on every turn discard. */
 	flipOwnerId: string | null = null;
+	/** Timestamp until which flipping is allowed. Opens on every discard, then expires. */
+	flipUntil: number | null = null;
 	winnerIds: string[] | null = null;
 	log: string[] = [];
 
@@ -138,6 +142,7 @@ export default class Game {
 		this.cambioCallerId = null;
 		this.pendingGive = null;
 		this.flipOwnerId = null;
+		this.flipUntil = null;
 		this.winnerIds = null;
 
 		for (const player of this.players) {
@@ -184,6 +189,8 @@ export default class Game {
 	callCambio(player: Player) {
 		this.assertTurn(player, 'awaiting_draw');
 		if (this.cambioCallerId) throw new GameError('Cambio has already been called');
+		if (player.score > 5)
+			throw new GameError('You can only call Cambio with 5 points or less in your hand');
 		this.cambioCallerId = player.id;
 		this.finalTurnsLeft = this.players.filter((p) => p !== player && p.connected).length;
 		this.addLog(`🔔 ${player.name} called CAMBIO! Everyone gets one last turn.`);
@@ -196,7 +203,8 @@ export default class Game {
 			const card = this.discards.pop();
 			if (!card) throw new GameError('The discard pile is empty');
 			this.drawnCard = card;
-			this.flipOwnerId = null; // new discard top, new flip race
+			this.flipOwnerId = null;
+			this.flipUntil = null; // the flippable card is gone
 			this.recordMove('discard', 'drawn', card); // taking from the discard is public
 		} else {
 			this.drawnCard = this.drawFromDeck();
@@ -336,6 +344,8 @@ export default class Game {
 			throw new GameError('You cannot touch the cards of whoever called Cambio');
 		const top = this.discardTop;
 		if (!top) throw new GameError('There is nothing on the discard pile yet');
+		if (!this.flipUntil || Date.now() > this.flipUntil)
+			throw new GameError('Too late — you can only flip right after a card was discarded');
 		const card = this.cardAt(ref);
 		const owner = this.playerById(ref.playerId);
 
@@ -399,19 +409,27 @@ export default class Game {
 	private pushDiscard(card: Card) {
 		this.discards.push(card);
 		this.flipOwnerId = null;
+		this.flipUntil = Date.now() + FLIP_WINDOW_MS;
 	}
 
 	private drawFromDeck(): Card {
-		if (this.deck.count === 0) {
-			// shuffle everything but the top discard back into the deck
-			const top = this.discards.pop() ?? null;
-			this.deck = new Deck(this.discards);
-			this.discards = top ? [top] : [];
-			this.deck.shuffle();
-			if (this.deck.count === 0) throw new GameError('No cards left to draw');
-			this.addLog('Deck was empty — discard pile shuffled back in');
-		}
-		return this.deck.drawCard();
+		if (this.deck.count === 0) this.recycleDiscards();
+		if (this.deck.count === 0) throw new GameError('No cards left to draw');
+		const card = this.deck.drawCard();
+		// keep the draw pile alive: once it runs down to its last card,
+		// the discards (minus the top card) are shuffled straight back in
+		if (this.deck.count <= 1) this.recycleDiscards();
+		return card;
+	}
+
+	private recycleDiscards() {
+		if (this.discards.length <= 1) return;
+		const top = this.discards.pop()!;
+		const recycled = new Deck(this.discards);
+		this.discards = [top];
+		recycled.shuffle();
+		this.deck.cards.push(...recycled.cards);
+		this.addLog('Discard pile shuffled back into the deck');
 	}
 
 	private endTurn() {
@@ -469,7 +487,7 @@ export default class Game {
 
 	handleDisconnect(player: Player) {
 		player.connected = false;
-		if (this.phase === 'waiting' || this.phase === 'finished') {
+		if (this.phase === 'waiting') {
 			this.removePlayer(player);
 			return;
 		}
@@ -491,9 +509,22 @@ export default class Game {
 			if (this.drawnCard) this.pushDiscard(this.drawnCard);
 			this.endTurn();
 		}
+	}
 
-		if (this.phase === 'playing' && this.players.filter((p) => p.connected).length < 2) {
-			this.finish();
+	handleReconnect(player: Player) {
+		player.connected = true;
+		this.addLog(`${player.name} reconnected`);
+		// they may have missed their memorize window — show the cards again
+		if (this.phase === 'initial_peek') {
+			this.onReveal(
+				[player.id],
+				[2, 3].map((index) => ({
+					ref: { playerId: player.id, index },
+					card: player.hand[index]!.toData()
+				})),
+				'Memorize these two cards!',
+				0
+			);
 		}
 	}
 
@@ -525,6 +556,11 @@ export default class Game {
 			activePower: this.activePower,
 			kingRefs: this.kingRefs,
 			cambioCallerId: this.cambioCallerId,
+			cambioAllowed: player.score <= 5,
+			flipRemainingMs:
+				this.phase === 'playing' && this.flipUntil
+					? Math.max(0, this.flipUntil - Date.now())
+					: 0,
 			pendingGive: this.pendingGive
 				? { fromId: this.pendingGive.fromId, toId: this.pendingGive.toId }
 				: null,

@@ -6,6 +6,7 @@ import type {
 	GameView,
 	ServerMessage
 } from '$lib/shared/types';
+import { tick } from 'svelte';
 import { cardLocations, endpointKey } from './locations';
 
 interface Reveal {
@@ -20,6 +21,8 @@ export interface Flight {
 	card: CardData | 'hidden';
 	from: DOMRect;
 	to: DOMRect;
+	/** Location key of the destination — that spot hides its card while the flight lasts. */
+	targetKey: string;
 }
 
 /**
@@ -37,22 +40,33 @@ class GameClient {
 	picks = $state<CardRef[]>([]);
 	/** Cards currently flying across the table. */
 	flights = $state<Flight[]>([]);
+	/** Whether the flip race is currently open (a discard happened moments ago). */
+	flipOpen = $state(false);
 	showHints = $state(true);
 
 	private socket: WebSocket | null = null;
 	private errorTimer: ReturnType<typeof setTimeout> | undefined;
+	private flipTimer: ReturnType<typeof setTimeout> | undefined;
 	private revealSeq = 0;
 	private flightSeq = 0;
+	private resumeTried = false;
+	/** Set when another tab took over this session — stop trying to reclaim it. */
+	private suppressResume = false;
+	/** Moves whose start position was measured, waiting for the new state to render. */
+	private pendingMoves: { card: CardData | 'hidden'; from: DOMRect; toKey: string }[] = [];
 
 	connect() {
 		if (this.socket) return;
 		this.showHints = localStorage.getItem('cambio.hints') !== '0';
+		this.resumeTried = false;
 		const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
 		this.socket = new WebSocket(`${protocol}://${location.host}/ws`);
 		this.socket.onmessage = (event) => this.handle(JSON.parse(event.data));
 		this.socket.onclose = () => {
 			this.connected = false;
 			this.socket = null;
+			// keep trying — on success the stored session resumes the running game
+			setTimeout(() => this.connect(), 1500);
 		};
 	}
 
@@ -81,12 +95,36 @@ class GameClient {
 		this.flights = this.flights.filter((f) => f.id !== id);
 	}
 
-	private startFlights(moves: CardMove[]) {
+	/** Is a card currently flying towards this location? Then the spot hides its own card. */
+	isFlightTarget(key: string): boolean {
+		return this.flights.some((f) => f.targetKey === key);
+	}
+
+	/** Measure where the moving cards start, while the old layout is still on screen. */
+	private prepareFlights(moves: CardMove[]) {
 		for (const move of moves) {
 			const from = cardLocations.get(endpointKey(move.from))?.getBoundingClientRect();
-			const to = cardLocations.get(endpointKey(move.to))?.getBoundingClientRect();
-			if (!from || !to) continue;
-			this.flights.push({ id: ++this.flightSeq, card: move.card, from, to });
+			if (!from) continue;
+			this.pendingMoves.push({ card: move.card, from, toKey: endpointKey(move.to) });
+		}
+	}
+
+	/** After the new state rendered, measure the destinations and launch the flights. */
+	private async launchFlights() {
+		if (!this.pendingMoves.length) return;
+		const moves = this.pendingMoves;
+		this.pendingMoves = [];
+		await tick(); // let Svelte render the new state first, so freshly added slots exist
+		for (const move of moves) {
+			const to = cardLocations.get(move.toKey)?.getBoundingClientRect();
+			if (!to) continue;
+			this.flights.push({
+				id: ++this.flightSeq,
+				card: move.card,
+				from: move.from,
+				to,
+				targetKey: move.toKey
+			});
 		}
 	}
 
@@ -105,14 +143,51 @@ class GameClient {
 
 	private handle(message: ServerMessage) {
 		switch (message.method) {
-			case 'connected':
+			case 'connected': {
 				this.clientId = message.clientId;
 				this.connected = true;
+				// a token from THIS tab (reload) may displace its own lingering socket;
+				// the browser-wide token only resumes a seat that is really offline
+				const tabSession = sessionStorage.getItem('cambio.session');
+				const session = tabSession ?? localStorage.getItem('cambio.session');
+				if (session && session !== message.clientId && !this.resumeTried && !this.suppressResume) {
+					this.resumeTried = true;
+					this.send({ method: 'resume', token: session, takeover: tabSession !== null });
+				}
+				break;
+			}
+			case 'resumeFailed':
+				// forget the session if the game is truly gone — but not when the
+				// seat is simply in use by another (still valid) tab
+				if (!message.seatTaken) {
+					sessionStorage.removeItem('cambio.session');
+					localStorage.removeItem('cambio.session');
+				}
+				break;
+			case 'superseded':
+				this.suppressResume = true;
+				this.view = null;
+				this.error = 'You opened this game in another window';
+				clearTimeout(this.errorTimer);
+				this.errorTimer = setTimeout(() => (this.error = null), 6000);
 				break;
 			case 'state': {
+				// being in a game is what makes the session worth remembering
+				if (this.clientId) {
+					sessionStorage.setItem('cambio.session', this.clientId);
+					localStorage.setItem('cambio.session', this.clientId);
+				}
 				const prev = this.view;
 				this.view = message.state;
 				this.picks = [];
+				clearTimeout(this.flipTimer);
+				this.flipOpen = message.state.flipRemainingMs > 0;
+				if (this.flipOpen) {
+					this.flipTimer = setTimeout(
+						() => (this.flipOpen = false),
+						message.state.flipRemainingMs
+					);
+				}
 				// sticky reveals (initial peek, king look) live until the game moves on
 				const moved =
 					prev?.phase !== message.state.phase ||
@@ -123,6 +198,7 @@ class GameClient {
 						if (this.reveals[key].sticky) delete this.reveals[key];
 					}
 				}
+				this.launchFlights();
 				break;
 			}
 			case 'reveal':
@@ -138,7 +214,7 @@ class GameClient {
 				}
 				break;
 			case 'moves':
-				this.startFlights(message.moves);
+				this.prepareFlights(message.moves);
 				break;
 			case 'error':
 				this.error = message.message;

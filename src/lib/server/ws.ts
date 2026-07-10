@@ -26,8 +26,10 @@ function broadcastState(game: Game) {
 	for (const player of game.players) {
 		const client = CLIENTS.get(player.id);
 		if (!client?.player.connected) continue;
-		send(client.ws, { method: 'state', state: game.viewFor(player) });
+		// moves go first: the client measures the moving cards' start positions
+		// in the old layout before the new state re-renders the table
 		if (moves.length) send(client.ws, { method: 'moves', moves });
+		send(client.ws, { method: 'state', state: game.viewFor(player) });
 	}
 }
 
@@ -67,9 +69,48 @@ function joinGame(client: Client, gameId: string, name: string) {
 	console.log('player joined game:', client.player.name, game.uid);
 }
 
+/**
+ * Rebind a fresh connection to the disconnected player it used to be.
+ * The token is the old clientId, remembered by the browser in localStorage.
+ */
+function resume(client: Client, token: string, takeover: boolean) {
+	if (!client.game && typeof token === 'string') {
+		for (const game of GAMES.values()) {
+			const player = game.players.find((p) => p.id === token);
+			if (!player) continue;
+			const existing = CLIENTS.get(token);
+			if (existing && existing !== client) {
+				// the seat is still live on another socket. A reloading tab (takeover)
+				// may displace it — its own close often races this new connection.
+				// Any other tab may not steal a live seat.
+				if (!takeover) return send(client.ws, { method: 'resumeFailed', seatTaken: true });
+				CLIENTS.delete(token);
+				send(existing.ws, { method: 'superseded' });
+				try {
+					existing.ws.close();
+				} catch {
+					// already gone
+				}
+			}
+			CLIENTS.delete(client.player.id);
+			CLIENTS.set(token, client);
+			client.player = player;
+			client.game = game;
+			game.handleReconnect(player);
+			send(client.ws, { method: 'connected', clientId: token });
+			broadcastState(game);
+			console.log('player resumed game:', player.name, game.uid);
+			return;
+		}
+	}
+	send(client.ws, { method: 'resumeFailed' });
+}
+
 function handleMessage(client: Client, message: ClientMessage) {
 	const { player, game } = client;
 
+	if (message.method === 'resume')
+		return resume(client, message.token, message.takeover === true);
 	if (message.method === 'create' || message.method === 'join') {
 		if (message.method === 'create') createGame(client, message.name);
 		else joinGame(client, message.gameId, message.name);
@@ -147,7 +188,10 @@ export function attachGameServer(wss: WebSocketServer) {
 		});
 
 		ws.on('close', () => {
-			CLIENTS.delete(clientId);
+			// a resumed connection may have taken over this identity — then this
+			// close is stale and must not mark the player as disconnected
+			if (CLIENTS.get(client.player.id) !== client) return;
+			CLIENTS.delete(client.player.id);
 			const game = client.game;
 			if (!game) return;
 			game.handleDisconnect(client.player);

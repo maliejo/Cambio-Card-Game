@@ -7,12 +7,15 @@
 		const dx = flight.to.left - flight.from.left;
 		const dy = flight.to.top - flight.from.top;
 		const scale = flight.to.width / flight.from.width;
+		// like svelte's crossfade: duration follows the travelled distance
+		const duration = 300 + Math.sqrt(dx * dx + dy * dy) * 0.9;
 		const animation = node.animate(
 			[
-				{ transform: 'translate(0px, 0px) scale(1)' },
-				{ transform: `translate(${dx}px, ${dy}px) scale(${scale})` }
+				{ transform: 'translate(0px, 0px) scale(1)', offset: 0 },
+				{ transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(${(1 + scale) / 2 + 0.15})`, offset: 0.5 },
+				{ transform: `translate(${dx}px, ${dy}px) scale(${scale})`, offset: 1 }
 			],
-			{ duration: 600, easing: 'cubic-bezier(0.35, 0, 0.25, 1)', fill: 'forwards' }
+			{ duration: Math.min(900, duration), easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' }
 		);
 		animation.onfinish = () => client.endFlight(flight.id);
 		return {

@@ -33,8 +33,16 @@ export function actionFor(playerId: string, index: number): CardAction | null {
 		if (v.turnState === 'king_decide') return null;
 	}
 
-	// no contextual action → tapping a card is a flip attempt
-	if (self !== v.cambioCallerId && playerId !== v.cambioCallerId && v.discardTop) return 'flip';
+	// no contextual action → tapping a card is a flip attempt, but only
+	// while the flip race is open (shortly after a discard)
+	if (
+		client.flipOpen &&
+		self !== v.cambioCallerId &&
+		playerId !== v.cambioCallerId &&
+		v.discardTop
+	) {
+		return 'flip';
+	}
 	return null;
 }
 

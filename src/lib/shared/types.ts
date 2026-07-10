@@ -48,6 +48,10 @@ export interface GameView {
 	/** The two cards picked for a king peek — only meaningful to the current player. */
 	kingRefs: CardRef[];
 	cambioCallerId: string | null;
+	/** Whether YOU are allowed to call Cambio (your hand is worth 5 points or less). */
+	cambioAllowed: boolean;
+	/** How long flipping is still allowed (ms) — flips are only open briefly after a discard. */
+	flipRemainingMs: number;
 	pendingGive: { fromId: string; toId: string } | null;
 	winnerIds: string[] | null;
 	log: string[];
@@ -66,6 +70,12 @@ export interface CardMove {
 export type ClientMessage =
 	| { method: 'create'; name: string }
 	| { method: 'join'; gameId: string; name: string }
+	| {
+			method: 'resume';
+			token: string;
+			/** True when the token comes from this very tab (reload) — may displace a live socket. */
+			takeover: boolean;
+	  }
 	| { method: 'start' }
 	| { method: 'ready' }
 	| { method: 'cambio' }
@@ -81,6 +91,12 @@ export type ClientMessage =
 
 export type ServerMessage =
 	| { method: 'connected'; clientId: string }
+	| {
+			method: 'resumeFailed';
+			/** The seat exists but is actively used elsewhere — keep the stored session. */
+			seatTaken?: boolean;
+	  }
+	| { method: 'superseded' }
 	| { method: 'state'; state: GameView }
 	| { method: 'moves'; moves: CardMove[] }
 	| {
