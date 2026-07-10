@@ -15,6 +15,9 @@ node_modules
 /build
 /dist
 
+# Test artifacts
+.playwright-mcp
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
