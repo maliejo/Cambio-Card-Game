@@ -6,8 +6,9 @@ import { client } from './game.svelte';
  */
 export function handCardWidth(large: boolean): string {
 	const compact = (client.view?.players.length ?? 0) >= 4;
-	if (large) return compact ? 'w-14 sm:w-20' : 'w-20 sm:w-24';
-	return compact ? 'w-9 sm:w-14' : 'w-14 sm:w-16';
+	// desktop windows are wide but often not tall — don't grow past w-20 there
+	if (large) return compact ? 'w-14 sm:w-20' : 'w-20';
+	return compact ? 'w-9 sm:w-14' : 'w-14';
 }
 
 export function pileCardWidth(): string {

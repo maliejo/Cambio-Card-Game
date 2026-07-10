@@ -1,6 +1,5 @@
 <script lang="ts">
-	import type { CardData, Rank, Suit } from '$lib/shared/types';
-	import cardsUrl from 'svg-cards/svg-cards.svg?url';
+	import type { CardData, Rank } from '$lib/shared/types';
 
 	interface Props {
 		/** A face-up card, 'hidden' for a face-down card, or null for an empty slot. */
@@ -12,20 +11,22 @@
 	}
 	let { card, clickable = false, selected = false, highlighted = false, onclick }: Props = $props();
 
-	const rankNames: Record<Rank, string> = {
-		A: '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
-		T: '10', J: 'jack', Q: 'queen', K: 'king', F: 'joker'
-	};
-	const suitNames: Record<Suit, string> = { C: 'club', D: 'diamond', H: 'heart', S: 'spade' };
+	// SVGs from github.com/letele/playing-cards (CC0), vendored in static/cards:
+	// "<suit>-<rank>.svg", jokers J-1 (colored) / J-2 (black); back.svg is our own
+	// derivative with a bolder pattern that stays readable at small sizes
+	const rankNames: Partial<Record<Rank, string>> = { T: '10' };
 
-	function spriteId(card: CardData | 'hidden'): string {
+	function fileFor(card: CardData | 'hidden'): string {
 		if (card === 'hidden') return 'back';
-		if (card.rank === 'F') return card.suit === 'H' || card.suit === 'D' ? 'joker_red' : 'joker_black';
-		return `${suitNames[card.suit]}_${rankNames[card.rank]}`;
+		if (card.rank === 'F') return card.suit === 'H' || card.suit === 'D' ? 'J-1' : 'J-2';
+		return `${card.suit}-${rankNames[card.rank] ?? card.rank}`;
 	}
 
 	function label(card: CardData | 'hidden'): string {
-		return card === 'hidden' ? 'face-down card' : spriteId(card).replace('_', ' ');
+		if (card === 'hidden') return 'face-down card';
+		if (card.rank === 'F') return card.suit === 'H' || card.suit === 'D' ? 'red joker' : 'black joker';
+		const suits = { C: 'clubs', D: 'diamonds', H: 'hearts', S: 'spades' };
+		return `${rankNames[card.rank] ?? card.rank} of ${suits[card.suit]}`;
 	}
 
 	// The face actually rendered lags behind the prop by half a flip:
@@ -54,23 +55,23 @@
 </script>
 
 {#if card === null}
-	<div class="aspect-[169/245] w-full rounded-md border-2 border-dashed border-black/20"></div>
+	<div class="aspect-[5/7] w-full rounded-md border-2 border-dashed border-black/20"></div>
 {:else}
 	<button
 		type="button"
-		class="block aspect-[169/245] w-full rounded-md transition-transform [perspective:600px]
+		class="block aspect-[5/7] w-full rounded-md transition-transform [perspective:600px]
 			{clickable ? 'cursor-pointer hover:-translate-y-1 hover:drop-shadow-lg' : 'cursor-default'}
 			{selected || highlighted ? '-translate-y-2 scale-105 drop-shadow-[0_10px_12px_rgba(6,1,17,0.45)]' : ''}"
 		disabled={!clickable}
 		aria-label={label(card)}
 		{onclick}
 	>
-		<svg
-			viewBox="0 0 169.075 244.64"
-			class="h-full w-full transition-transform duration-150 ease-in"
+		<img
+			src="/cards/{fileFor(shownFace ?? card)}.svg"
+			alt=""
+			draggable="false"
+			class="h-full w-full transition-transform duration-150 ease-in select-none"
 			style:transform={midFlip ? 'rotateY(90deg)' : 'rotateY(0deg)'}
-		>
-			<use href="{cardsUrl}#{spriteId(shownFace ?? card)}" />
-		</svg>
+		/>
 	</button>
 {/if}

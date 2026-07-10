@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      svg-cards:
-        specifier: ^4.0.0
-        version: 4.0.0
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -1008,9 +1005,6 @@ packages:
     resolution: {integrity: sha512-/d0QHehmRuJW8gVz395MTkPcPozxzdjBMBE8oEYGz8O3b9KTMzzQ9ZHJQLuFKOHOPQbU6kx/X4iid/EBBzH7iw==}
     engines: {node: '>=18'}
 
-  svg-cards@4.0.0:
-    resolution: {integrity: sha512-vjEXa4ic493bshMrm9wfiE7vaO02rjwfOQuyVRBQRnNDhaM4DCqTbkxuGSt/X0fhGrsOLOBEoVcUfTL81UY10g==}
-
   tailwindcss@4.3.2:
     resolution: {integrity: sha512-WtctNNSH8A9jlMIqxzuYumOHU5uGZyRv0Q5svQl+oEPy5w84YpBxdb7MdqyiSPQge5jTJ6zFQLq0PFygdccSBA==}
 
@@ -1838,8 +1832,6 @@ snapshots:
       zimmerframe: 1.1.4
     transitivePeerDependencies:
       - '@typescript-eslint/types'
-
-  svg-cards@4.0.0: {}
 
   tailwindcss@4.3.2: {}
 
