@@ -12,19 +12,19 @@
 	let { card, clickable = false, selected = false, highlighted = false, onclick }: Props = $props();
 
 	// SVGs from github.com/letele/playing-cards (CC0), vendored in static/cards:
-	// "<suit>-<rank>.svg", jokers J-1 (colored) / J-2 (black); back.svg is our own
+	// "<suit>-<rank>.svg"; both jokers use J-2 (the black one); back.svg is our own
 	// derivative with a bolder pattern that stays readable at small sizes
 	const rankNames: Partial<Record<Rank, string>> = { T: '10' };
 
 	function fileFor(card: CardData | 'hidden'): string {
 		if (card === 'hidden') return 'back';
-		if (card.rank === 'F') return card.suit === 'H' || card.suit === 'D' ? 'J-1' : 'J-2';
+		if (card.rank === 'F') return 'J-2';
 		return `${card.suit}-${rankNames[card.rank] ?? card.rank}`;
 	}
 
 	function label(card: CardData | 'hidden'): string {
 		if (card === 'hidden') return 'face-down card';
-		if (card.rank === 'F') return card.suit === 'H' || card.suit === 'D' ? 'red joker' : 'black joker';
+		if (card.rank === 'F') return 'joker';
 		const suits = { C: 'clubs', D: 'diamonds', H: 'hearts', S: 'spades' };
 		return `${rankNames[card.rank] ?? card.rank} of ${suits[card.suit]}`;
 	}

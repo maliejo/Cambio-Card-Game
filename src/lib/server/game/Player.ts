@@ -7,9 +7,24 @@ export default class Player {
 	gamesWon = 0;
 	ready = false;
 	connected = true;
+	/** Points collected across all rounds — lower is better. */
+	totalPoints = 0;
+	/** What the last finished round scored (hand + cambio bonus). Null while a round runs. */
+	roundPoints: number | null = null;
+	/** Every card this player has seen face-up. Knowledge travels with the card when it moves. */
+	known = new Set<Card>();
 
 	constructor(id: string) {
 		this.id = id;
+	}
+
+	learn(card: Card) {
+		this.known.add(card);
+	}
+
+	/** Whether the player has seen every card currently in their hand. */
+	get knowsWholeHand(): boolean {
+		return this.hand.every((card) => !card || this.known.has(card));
 	}
 
 	get score(): number {

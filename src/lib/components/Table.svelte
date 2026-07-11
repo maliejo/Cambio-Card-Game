@@ -26,6 +26,11 @@
 
 	const canDraw = $derived(myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive);
 
+	// points board between rounds — fewest total points leads
+	const standings = $derived([...v.players].sort((a, b) => a.totalPoints - b.totalPoints));
+	const cambioBonus = (p: (typeof v.players)[number]) =>
+		p.roundPoints !== null && p.score !== null ? p.roundPoints - p.score : 0;
+
 	const status = $derived.by(() => {
 		if (v.phase === 'initial_peek') {
 			return self.ready ? 'Waiting for the others…' : 'Memorize your two revealed cards!';
@@ -98,12 +103,45 @@
 				>
 					<PlayingCard
 						card={v.discardTop}
-						clickable={canDraw && v.discardTop !== null}
+						clickable={canDraw && v.discardTop !== null && !v.discardBurnt}
 						onclick={() => client.send({ method: 'draw', from: 'discard' })}
 					/>
-					<span class="text-xs text-dark/60">discard</span>
+					<span class="text-xs text-dark/60">{v.discardBurnt ? '🔥 burnt' : 'discard'}</span>
 				</div>
 			</div>
+		{:else}
+			<!-- points board: this round + running total across rounds -->
+			<table class="rounded-xl bg-white/80 text-xs shadow-sm sm:text-sm">
+				<thead>
+					<tr class="text-[10px] text-dark/50 uppercase">
+						<th class="px-3 pt-2 pb-1 text-left font-medium">player</th>
+						<th class="px-3 pt-2 pb-1 text-right font-medium">round</th>
+						<th class="px-3 pt-2 pb-1 text-right font-medium">total</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each standings as p (p.id)}
+						<tr class="border-t border-dark/5 {p.id === v.selfId ? 'font-semibold' : ''}">
+							<td class="max-w-32 truncate px-3 py-1 text-left">
+								{#if v.winnerIds?.includes(p.id)}👑 {/if}{p.name}
+							</td>
+							<td class="px-3 py-1 text-right whitespace-nowrap">
+								{#if cambioBonus(p) !== 0}
+									<span
+										class="mr-1 rounded-full px-1.5 text-[10px] text-white
+											{cambioBonus(p) < 0 ? 'bg-primary' : 'bg-danger'}"
+										title="Cambio {cambioBonus(p) < 0 ? 'bonus' : 'penalty'}"
+									>
+										🔔 {cambioBonus(p) > 0 ? '+' : ''}{cambioBonus(p)}
+									</span>
+								{/if}
+								{p.roundPoints}
+							</td>
+							<td class="px-3 py-1 text-right">{p.totalPoints}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
 		{/if}
 
 		<div class="flex flex-wrap justify-center gap-2">

@@ -31,7 +31,8 @@ export default class Card implements CardData {
 			case 'Q':
 				return 12;
 			case 'K':
-				return this.isRed ? -1 : 13;
+				// red kings are the best cards in the game: both together are worth -4
+				return this.isRed ? -2 : 13;
 			case 'A':
 				return 1;
 			case 'F':

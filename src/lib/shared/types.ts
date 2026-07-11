@@ -28,6 +28,10 @@ export interface PlayerView {
 	gamesWon: number;
 	hand: HandSlot[];
 	score: number | null;
+	/** Points scored in the last finished round (hand + cambio bonus). Null while a round runs. */
+	roundPoints: number | null;
+	/** Points collected across all rounds — lower is better. */
+	totalPoints: number;
 }
 
 export interface GameView {
@@ -38,6 +42,8 @@ export interface GameView {
 	players: PlayerView[];
 	deckCount: number;
 	discardTop: CardData | null;
+	/** The top discard is a flipped duplicate ("burnt") — it cannot be drawn. */
+	discardBurnt: boolean;
 	discardCount: number;
 	currentPlayerId: string | null;
 	turnState: TurnState | null;
@@ -48,7 +54,7 @@ export interface GameView {
 	/** The two cards picked for a king peek — only meaningful to the current player. */
 	kingRefs: CardRef[];
 	cambioCallerId: string | null;
-	/** Whether YOU are allowed to call Cambio (your hand is worth 5 points or less). */
+	/** Whether YOU may call Cambio: you have seen every card in your hand AND it is worth ≤5 points. */
 	cambioAllowed: boolean;
 	/** How long flipping is still allowed (ms) — flips are only open briefly after a discard. */
 	flipRemainingMs: number;

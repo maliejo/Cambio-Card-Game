@@ -46,6 +46,8 @@ export default class Game {
 	pendingGive: { fromId: string; toId: string; toIndex: number } | null = null;
 	/** Who claimed the current discard by flipping correctly first. Resets on every turn discard. */
 	flipOwnerId: string | null = null;
+	/** Cards that were thrown off as flipped duplicates — "burnt", nobody may draw them from the discard pile. */
+	burntCards = new Set<Card>();
 	/** Timestamp until which flipping is allowed. Opens on every discard, then expires. */
 	flipUntil: number | null = null;
 	winnerIds: string[] | null = null;
@@ -158,11 +160,17 @@ export default class Game {
 		this.pendingGive = null;
 		this.flipOwnerId = null;
 		this.flipUntil = null;
+		this.burntCards.clear();
 		this.winnerIds = null;
 
 		for (const player of this.players) {
 			player.hand = Array.from({ length: HAND_SIZE }, () => this.deck.drawCard());
 			player.ready = false;
+			player.roundPoints = null;
+			player.known.clear();
+			// the two bottom cards are the ones they get to memorize
+			player.learn(player.hand[2]!);
+			player.learn(player.hand[3]!);
 		}
 		this.phase = 'initial_peek';
 		this.startedAt = Date.now();
@@ -207,6 +215,9 @@ export default class Game {
 	callCambio(player: Player) {
 		this.assertTurn(player, 'awaiting_draw');
 		if (this.cambioCallerId) throw new GameError('Cambio has already been called');
+		// an unseen card might be anything — you must know your whole hand to call
+		if (!player.knowsWholeHand)
+			throw new GameError('You can only call Cambio when you have seen all of your cards');
 		if (player.score > 5)
 			throw new GameError('You can only call Cambio with 5 points or less in your hand');
 		this.cambioCallerId = player.id;
@@ -219,6 +230,9 @@ export default class Game {
 	draw(player: Player, from: 'deck' | 'discard') {
 		this.assertTurn(player, 'awaiting_draw');
 		if (from === 'discard') {
+			const top = this.discardTop;
+			if (top && this.burntCards.has(top))
+				throw new GameError('That card is burnt — flipped duplicates cannot be picked up');
 			const card = this.discards.pop();
 			if (!card) throw new GameError('The discard pile is empty');
 			this.drawnCard = card;
@@ -229,6 +243,7 @@ export default class Game {
 			this.drawnCard = this.drawFromDeck();
 			this.recordMove('deck', 'drawn');
 		}
+		player.learn(this.drawnCard!);
 		this.drawnFrom = from;
 		this.turnState = 'holding';
 		this.addLog(`${player.name} drew from the ${from === 'deck' ? 'deck' : 'discard pile'}`);
@@ -278,6 +293,7 @@ export default class Game {
 				const [ref] = targets;
 				if (targets.length !== 1 || ref.playerId !== player.id)
 					throw new GameError('Pick one of your own cards to peek at');
+				player.learn(this.cardAt(ref));
 				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], 'Your card', 6000);
 				this.addLog(`👁️ ${player.name} peeked at one of their own cards`);
 				this.endTurn();
@@ -287,6 +303,7 @@ export default class Game {
 				const [ref] = targets;
 				if (targets.length !== 1 || ref.playerId === player.id)
 					throw new GameError("Pick someone else's card to peek at");
+				player.learn(this.cardAt(ref)); // if it ever swaps into their hand, they know it
 				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], `${this.playerById(ref.playerId).name}'s card`, 6000);
 				this.addLog(`👁️ ${player.name} peeked at one of ${this.playerById(ref.playerId).name}'s cards`);
 				this.endTurn();
@@ -310,6 +327,7 @@ export default class Game {
 				if (a.playerId === b.playerId && a.index === b.index)
 					throw new GameError('Pick two different cards');
 				this.kingRefs = targets;
+				for (const ref of targets) player.learn(this.cardAt(ref));
 				this.onReveal(
 					[player.id],
 					targets.map((ref) => ({ ref, card: this.cardAt(ref).toData() })),
@@ -369,6 +387,7 @@ export default class Game {
 		const owner = this.playerById(ref.playerId);
 
 		// everyone sees which card was flipped, right or wrong
+		for (const p of this.players) p.learn(card);
 		this.onReveal(
 			this.players.map((p) => p.id),
 			[{ ref, card: card.toData() }],
@@ -380,6 +399,7 @@ export default class Game {
 		if (card.rank === top.rank && !someoneElseWasFirst) {
 			owner.hand[ref.index] = null;
 			this.pushDiscard(card);
+			this.burntCards.add(card); // a flipped duplicate is burnt: nobody may pick it up
 			this.flipOwnerId = player.id; // pushDiscard resets it, claim it back
 			this.recordMove(ref, 'discard', card);
 
@@ -427,6 +447,8 @@ export default class Game {
 
 	private pushDiscard(card: Card) {
 		this.discards.push(card);
+		// the discard pile is face-up: everyone has now seen this card
+		for (const p of this.players) p.learn(card);
 		this.flipOwnerId = null;
 		this.flipUntil = Date.now() + FLIP_WINDOW_MS;
 	}
@@ -447,6 +469,12 @@ export default class Game {
 		const recycled = new Deck(this.discards);
 		this.discards = [top];
 		recycled.shuffle();
+		// nobody can track a card through a shuffle — they all become unknown again,
+		// and a burnt card back in the deck is a normal card
+		for (const card of recycled.cards) {
+			this.burntCards.delete(card);
+			for (const p of this.players) p.known.delete(card);
+		}
 		this.deck.cards.push(...recycled.cards);
 		this.addLog('Discard pile shuffled back into the deck');
 	}
@@ -494,6 +522,21 @@ export default class Game {
 
 		this.winnerIds = winners.map((p) => p.id);
 		winners.forEach((p) => p.gamesWon++);
+
+		// points board: everyone banks their hand value, the caller gambles ±5 on top —
+		// -5 for having strictly the least points, +5 when someone else has less
+		for (const p of this.players) {
+			let bonus = 0;
+			if (p.id === this.cambioCallerId) {
+				const bestOther = Math.min(...this.players.filter((o) => o !== p).map((o) => o.score));
+				bonus = p.score < bestOther ? -5 : bestOther < p.score ? 5 : 0;
+				if (bonus === -5) this.addLog(`🔔 ${p.name} pulled the Cambio off: -5 bonus points`);
+				if (bonus === 5) this.addLog(`🔔 ${p.name} called Cambio but someone had less: +5 penalty points`);
+			}
+			p.roundPoints = p.score + bonus;
+			p.totalPoints += p.roundPoints;
+		}
+
 		this.onAnalytics('game_finished', this.analyticsData());
 		this.addLog(`🏆 ${winners.map((p) => p.name).join(' & ')} won with ${minScore} points!`);
 	}
@@ -565,10 +608,13 @@ export default class Game {
 				ready: p.ready,
 				gamesWon: p.gamesWon,
 				hand: p.hand.map((card) => (card ? (revealed ? card.toData() : 'hidden') : null)),
-				score: revealed ? p.score : null
+				score: revealed ? p.score : null,
+				roundPoints: p.roundPoints,
+				totalPoints: p.totalPoints
 			})),
 			deckCount: this.deck.count,
 			discardTop: this.discardTop?.toData() ?? null,
+			discardBurnt: this.discardTop ? this.burntCards.has(this.discardTop) : false,
 			discardCount: this.discards.length,
 			currentPlayerId: this.currentPlayer?.id ?? null,
 			turnState: this.turnState,
@@ -577,7 +623,7 @@ export default class Game {
 			activePower: this.activePower,
 			kingRefs: this.kingRefs,
 			cambioCallerId: this.cambioCallerId,
-			cambioAllowed: player.score <= 5,
+			cambioAllowed: player.knowsWholeHand && player.score <= 5,
 			flipRemainingMs:
 				this.phase === 'playing' && this.flipUntil
 					? Math.max(0, this.flipUntil - Date.now())
