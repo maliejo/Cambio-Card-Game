@@ -257,6 +257,10 @@ class GameClient {
 			}
 			case 'reveal':
 				for (const { ref, card } of message.cards) {
+					// a reveal for a slot that no longer holds a card (it just flew off to
+					// the discard pile) would render a phantom duplicate — skip it
+					const slot = this.view?.players.find((p) => p.id === ref.playerId)?.hand[ref.index];
+					if (slot === null || slot === undefined) continue;
 					const key = `${ref.playerId}:${ref.index}`;
 					const seq = ++this.revealSeq;
 					this.reveals[key] = { card, reason: message.reason, sticky: message.durationMs === 0, seq };

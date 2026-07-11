@@ -14,37 +14,35 @@
 	}
 	let { player, large = false, orientation = 0 }: Props = $props();
 
-	// two fixed rows as the OWNER sees them: the memorized cards (2, 3) stay
-	// bottom-left, extra cards (penalties, gifts) alternate between the rows
+	// two rows as the OWNER sees them: the memorized cards (2, 3) stay bottom-left,
+	// extra cards (penalties, gifts) alternate between the rows. Emptied slots are
+	// dropped entirely so the remaining cards slide together — no gaps.
 	const ownRows = $derived.by(() => {
 		const top = [0, 1];
 		const bottom = [2, 3].filter((i) => i < player.hand.length);
 		for (let i = 4; i < player.hand.length; i++) {
 			(top.length <= bottom.length ? top : bottom).push(i);
 		}
-		return [top, bottom];
+		return [
+			top.filter((i) => player.hand[i] !== null),
+			bottom.filter((i) => player.hand[i] !== null)
+		];
 	});
 
-	// what I see is the owner's layout rotated to where they sit at the table:
-	// across = upside down, left/right edge = turned a quarter
-	const grid = $derived.by(() => {
-		const rows = ownRows;
-		if (orientation === 0) return rows;
-		if (orientation === 180) return [...rows].reverse().map((row) => [...row].reverse());
-		const cols = Math.max(...rows.map((r) => r.length));
-		const out: number[][] = [];
-		for (let c = 0; c < cols; c++) {
-			const row: number[] = [];
-			for (let r = 0; r < rows.length; r++) {
-				const index =
-					orientation === 90
-						? rows[rows.length - 1 - r][c] // their bottom row lands on my left
-						: rows[r][cols - 1 - c]; // their bottom row lands on my right
-				if (index !== undefined) row.push(index);
-			}
-			out.push(row);
+	// rendered as COLUMNS so the two rows always line up, rotated to where the
+	// owner sits at the table: across = upside down, left/right edge = a quarter turn
+	const columns = $derived.by(() => {
+		const [top, bottom] = ownRows;
+		// sideways seats: the owner's rows become my columns
+		if (orientation === 90) return [bottom, top].filter((c) => c.length);
+		if (orientation === -90)
+			return [[...top].reverse(), [...bottom].reverse()].filter((c) => c.length);
+		const cols: number[][] = [];
+		for (let c = 0; c < Math.max(top.length, bottom.length); c++) {
+			cols.push([top[c], bottom[c]].filter((i) => i !== undefined));
 		}
-		return out;
+		if (orientation === 180) return cols.reverse().map((col) => col.reverse());
+		return cols;
 	});
 
 	const sideways = $derived(orientation === 90 || orientation === -90);
@@ -101,10 +99,10 @@
 	{/if}
 {/snippet}
 
-<div class="flex flex-col gap-1.5 sm:gap-2">
-	{#each grid as row, r (r)}
-		<div class="flex justify-center gap-1.5 sm:gap-2">
-			{#each row as index (index)}{@render slot(index)}{/each}
+<div class="flex items-center gap-1.5 sm:gap-2">
+	{#each columns as col, c (c)}
+		<div class="flex flex-col justify-center gap-1.5 sm:gap-2">
+			{#each col as index (index)}{@render slot(index)}{/each}
 		</div>
 	{/each}
 </div>
