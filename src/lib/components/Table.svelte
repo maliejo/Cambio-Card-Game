@@ -24,6 +24,15 @@
 		6: '"p3 p4 p5" "p2 table p6" ". p1 ."'
 	};
 
+	// where each seat faces: hands render rotated to match, like at a real table
+	function orientationFor(position: number): 0 | 90 | 180 | -90 {
+		const count = seatedPlayers.length;
+		if (position === 0) return 0; // me, at the bottom
+		if (count >= 4 && position === 1) return 90; // left edge of the table
+		if (count >= 4 && position === count - 1) return -90; // right edge
+		return 180; // across the table
+	}
+
 	const canDraw = $derived(myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive);
 
 	// points board between rounds — fewest total points leads
@@ -77,7 +86,7 @@
 	style:grid-auto-rows="minmax(0, 1fr)"
 >
 	{#each seatedPlayers as player, i (player.id)}
-		<Seat {player} area="p{i + 1}" />
+		<Seat {player} area="p{i + 1}" orientation={orientationFor(i)} />
 	{/each}
 
 	<div class="flex flex-col items-center justify-center gap-2 p-2 sm:gap-3" style="grid-area: table">

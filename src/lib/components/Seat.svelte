@@ -3,10 +3,15 @@
 	import PlayingCard from './PlayingCard.svelte';
 	import { client } from '$lib/client/game.svelte';
 	import { cardLocation } from '$lib/client/locations';
-	import { handCardWidth } from '$lib/client/ui';
+	import { handCardWidth, type Orientation } from '$lib/client/ui';
 	import type { PlayerView } from '$lib/shared/types';
 
-	let { player, area }: { player: PlayerView; area: string } = $props();
+	interface Props {
+		player: PlayerView;
+		area: string;
+		orientation?: Orientation;
+	}
+	let { player, area, orientation = 0 }: Props = $props();
 
 	const v = $derived(client.view!);
 	const isCurrent = $derived(v.phase === 'playing' && v.currentPlayerId === player.id);
@@ -28,7 +33,7 @@
 				<PlayingCard card={isSelf ? (v.drawnCard ?? 'hidden') : 'hidden'} highlighted />
 			</div>
 		{/if}
-		<Hand {player} large={isSelf} />
+		<Hand {player} large={isSelf} {orientation} />
 	</div>
 	<div
 		class="flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shadow-sm sm:text-sm
