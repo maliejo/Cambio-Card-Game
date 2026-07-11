@@ -53,6 +53,21 @@ export default class Game {
 
 	/** Wired up by the transport layer to push transient card reveals to specific players. */
 	onReveal: RevealFn = () => {};
+	/** Wired up by the transport layer to report game stats to analytics. */
+	onAnalytics: (name: string, data: Record<string, number>) => void = () => {};
+
+	/** When the current round was dealt — for tracking game duration. */
+	startedAt = 0;
+	/** Completed turns this round — for tracking game length. */
+	turnCount = 0;
+
+	analyticsData(): Record<string, number> {
+		return {
+			players: this.players.length,
+			turns: this.turnCount,
+			durationSeconds: Math.round((Date.now() - this.startedAt) / 1000)
+		};
+	}
 
 	/** Card movements of the last action, so the client can animate them. */
 	private moves: CardMove[] = [];
@@ -150,6 +165,9 @@ export default class Game {
 			player.ready = false;
 		}
 		this.phase = 'initial_peek';
+		this.startedAt = Date.now();
+		this.turnCount = 0;
+		this.onAnalytics('game_started', { players: this.players.length });
 		this.addLog('Cards dealt — memorize your two bottom cards!');
 
 		// everyone gets to memorize their two bottom cards until they press ready
@@ -193,6 +211,7 @@ export default class Game {
 			throw new GameError('You can only call Cambio with 5 points or less in your hand');
 		this.cambioCallerId = player.id;
 		this.finalTurnsLeft = this.players.filter((p) => p !== player && p.connected).length;
+		this.turnCount++;
 		this.addLog(`🔔 ${player.name} called CAMBIO! Everyone gets one last turn.`);
 		this.advanceTurn();
 	}
@@ -438,6 +457,7 @@ export default class Game {
 		this.activePower = null;
 		this.kingRefs = [];
 		this.turnState = 'awaiting_draw';
+		this.turnCount++;
 
 		if (this.phase !== 'playing') return; // a flip may have ended the round mid-turn
 
@@ -474,6 +494,7 @@ export default class Game {
 
 		this.winnerIds = winners.map((p) => p.id);
 		winners.forEach((p) => p.gamesWon++);
+		this.onAnalytics('game_finished', this.analyticsData());
 		this.addLog(`🏆 ${winners.map((p) => p.name).join(' & ')} won with ${minScore} points!`);
 	}
 

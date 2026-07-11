@@ -87,7 +87,9 @@ export type ClientMessage =
 	| { method: 'kingDecide'; swap: boolean }
 	| { method: 'flip'; playerId: string; index: number }
 	| { method: 'give'; index: number }
-	| { method: 'playAgain' };
+	| { method: 'playAgain' }
+	/** Browser performance numbers, relayed server-side to analytics. */
+	| { method: 'perf'; metrics: Record<string, number> };
 
 export type ServerMessage =
 	| { method: 'connected'; clientId: string }

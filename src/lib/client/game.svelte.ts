@@ -52,6 +52,7 @@ class GameClient {
 	private resumeTried = false;
 	/** Set when another tab took over this session — stop trying to reclaim it. */
 	private suppressResume = false;
+	private perfSent = false;
 	/** Moves whose start position was measured, waiting for the new state to render. */
 	private pendingMoves: { card: CardData | 'hidden'; from: DOMRect; toKey: string }[] = [];
 
@@ -72,6 +73,46 @@ class GameClient {
 
 	send(message: ClientMessage) {
 		this.socket?.send(JSON.stringify(message));
+	}
+
+	/**
+	 * Measure page performance and hand it to the server (once per page load).
+	 * It travels over our own websocket, so adblockers never see an analytics request.
+	 */
+	private reportPerformance() {
+		if (this.perfSent) return;
+		this.perfSent = true;
+
+		let lcp = 0;
+		try {
+			new PerformanceObserver((list) => {
+				for (const entry of list.getEntries()) lcp = entry.startTime;
+			}).observe({ type: 'largest-contentful-paint', buffered: true });
+		} catch {
+			// not supported in this browser
+		}
+
+		const report = () => {
+			const metrics: Record<string, number> = {};
+			const nav = performance.getEntriesByType('navigation')[0] as
+				| PerformanceNavigationTiming
+				| undefined;
+			if (nav) {
+				metrics.ttfb = nav.responseStart;
+				metrics.domContentLoaded = nav.domContentLoadedEventEnd;
+				metrics.load = nav.loadEventEnd;
+			}
+			const fcp = performance
+				.getEntriesByType('paint')
+				.find((p) => p.name === 'first-contentful-paint');
+			if (fcp) metrics.fcp = fcp.startTime;
+			if (lcp) metrics.lcp = lcp;
+			if (Object.keys(metrics).length) this.send({ method: 'perf', metrics });
+		};
+
+		// give LCP a moment to settle after the page is fully loaded
+		if (document.readyState === 'complete') setTimeout(report, 3000);
+		else window.addEventListener('load', () => setTimeout(report, 3000), { once: true });
 	}
 
 	get self() {
@@ -146,6 +187,7 @@ class GameClient {
 			case 'connected': {
 				this.clientId = message.clientId;
 				this.connected = true;
+				this.reportPerformance();
 				// a token from THIS tab (reload) may displace its own lingering socket;
 				// the browser-wide token only resumes a seat that is really offline
 				const tabSession = sessionStorage.getItem('cambio.session');

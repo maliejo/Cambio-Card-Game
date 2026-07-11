@@ -1,12 +1,16 @@
+import type { IncomingMessage } from 'node:http';
 import type { WebSocket, WebSocketServer } from 'ws';
 import Game, { GameError, MAX_PLAYERS } from './game/Game';
 import Player from './game/Player';
+import { trackEvent, type Visitor } from './analytics';
 import type { ClientMessage, ServerMessage } from '$lib/shared/types';
 
 interface Client {
 	ws: WebSocket;
 	player: Player;
 	game: Game | null;
+	visitor: Visitor;
+	perfReported: boolean;
 }
 
 const GAMES = new Map<string, Game>();
@@ -33,6 +37,16 @@ function broadcastState(game: Game) {
 	}
 }
 
+function trackPerf(client: Client, metrics: Record<string, number>) {
+	if (client.perfReported) return;
+	client.perfReported = true;
+	const clean: Record<string, number> = {};
+	for (const [key, value] of Object.entries(metrics).slice(0, 10)) {
+		if (typeof value === 'number' && Number.isFinite(value)) clean[key] = Math.round(value);
+	}
+	if (Object.keys(clean).length) trackEvent('web_performance', clean, client.visitor);
+}
+
 function wireReveals(game: Game) {
 	game.onReveal = (toPlayerIds, cards, reason, durationMs) => {
 		// deferred so reveals arrive after the state broadcast that follows the action —
@@ -52,6 +66,7 @@ function createGame(client: Client, name: string) {
 	while (GAMES.has(uid)) uid = Game.generateUID();
 	const game = new Game(uid);
 	wireReveals(game);
+	game.onAnalytics = (name, data) => trackEvent(name, data);
 	GAMES.set(uid, game);
 	console.log('new game created:', uid);
 	joinGame(client, uid, name);
@@ -109,6 +124,7 @@ function resume(client: Client, token: string, takeover: boolean) {
 function handleMessage(client: Client, message: ClientMessage) {
 	const { player, game } = client;
 
+	if (message.method === 'perf') return trackPerf(client, message.metrics ?? {});
 	if (message.method === 'resume')
 		return resume(client, message.token, message.takeover === true);
 	if (message.method === 'create' || message.method === 'join') {
@@ -163,9 +179,22 @@ function handleMessage(client: Client, message: ClientMessage) {
 }
 
 export function attachGameServer(wss: WebSocketServer) {
-	wss.on('connection', (ws: WebSocket) => {
+	wss.on('connection', (ws: WebSocket, req?: IncomingMessage) => {
 		const clientId = crypto.randomUUID();
-		const client: Client = { ws, player: new Player(clientId), game: null };
+		const forwarded = req?.headers['x-forwarded-for'];
+		const visitor: Visitor = {
+			userAgent: req?.headers['user-agent'],
+			ip:
+				(Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0].trim() ||
+				req?.socket.remoteAddress
+		};
+		const client: Client = {
+			ws,
+			player: new Player(clientId),
+			game: null,
+			visitor,
+			perfReported: false
+		};
 		CLIENTS.set(clientId, client);
 		console.log('new connection:', clientId);
 
@@ -198,6 +227,10 @@ export function attachGameServer(wss: WebSocketServer) {
 			if (game.players.every((p) => !p.connected)) {
 				GAMES.delete(game.uid);
 				console.log('game removed:', game.uid);
+				// a running round everyone walked away from counts as abandoned
+				if (game.phase === 'playing' || game.phase === 'initial_peek') {
+					trackEvent('game_abandoned', game.analyticsData());
+				}
 			} else {
 				broadcastState(game);
 			}
