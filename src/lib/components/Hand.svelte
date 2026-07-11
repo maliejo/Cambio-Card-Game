@@ -29,20 +29,28 @@
 		];
 	});
 
-	// rendered as COLUMNS so the two rows always line up, rotated to where the
-	// owner sits at the table: across = upside down, left/right edge = a quarter turn
-	const columns = $derived.by(() => {
+	// a strict grid, rotated to where the owner sits: across = upside down,
+	// left/right edge = a quarter turn. Rows/columns of unequal length are
+	// flush-aligned towards the owner's row start, so everything stays lined up.
+	const layout = $derived.by(() => {
 		const [top, bottom] = ownRows;
-		// sideways seats: the owner's rows become my columns
-		if (orientation === 90) return [bottom, top].filter((c) => c.length);
-		if (orientation === -90)
-			return [[...top].reverse(), [...bottom].reverse()].filter((c) => c.length);
-		const cols: number[][] = [];
-		for (let c = 0; c < Math.max(top.length, bottom.length); c++) {
-			cols.push([top[c], bottom[c]].filter((i) => i !== undefined));
+		switch (orientation) {
+			case 180:
+				return {
+					rows: [[...bottom].reverse(), [...top].reverse()].filter((r) => r.length),
+					flushEnd: true
+				};
+			// sideways seats: the owner's rows become my columns
+			case 90:
+				return { cols: [bottom, top].filter((c) => c.length), flushEnd: false };
+			case -90:
+				return {
+					cols: [[...top].reverse(), [...bottom].reverse()].filter((c) => c.length),
+					flushEnd: true
+				};
+			default:
+				return { rows: [top, bottom].filter((r) => r.length), flushEnd: false };
 		}
-		if (orientation === 180) return cols.reverse().map((col) => col.reverse());
-		return cols;
 	});
 
 	const sideways = $derived(orientation === 90 || orientation === -90);
@@ -99,10 +107,20 @@
 	{/if}
 {/snippet}
 
-<div class="flex items-center gap-1.5 sm:gap-2">
-	{#each columns as col, c (c)}
-		<div class="flex flex-col justify-center gap-1.5 sm:gap-2">
-			{#each col as index (index)}{@render slot(index)}{/each}
-		</div>
-	{/each}
-</div>
+{#if layout.rows}
+	<div class="flex flex-col gap-1.5 sm:gap-2 {layout.flushEnd ? 'items-end' : 'items-start'}">
+		{#each layout.rows as row, r (r)}
+			<div class="flex gap-1.5 sm:gap-2">
+				{#each row as index (index)}{@render slot(index)}{/each}
+			</div>
+		{/each}
+	</div>
+{:else}
+	<div class="flex gap-1.5 sm:gap-2 {layout.flushEnd ? 'items-end' : 'items-start'}">
+		{#each layout.cols ?? [] as col, c (c)}
+			<div class="flex flex-col gap-1.5 sm:gap-2">
+				{#each col as index (index)}{@render slot(index)}{/each}
+			</div>
+		{/each}
+	</div>
+{/if}

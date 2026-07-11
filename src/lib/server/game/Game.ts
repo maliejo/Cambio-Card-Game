@@ -1,16 +1,20 @@
 import Card from './Card';
 import Deck from './Deck';
 import Player from './Player';
-import type {
-	CardData,
-	CardMove,
-	CardRef,
-	GameView,
-	MoveEndpoint,
-	Phase,
-	Power,
-	TurnState
-} from '$lib/shared/types';
+// relative import: this file is loaded by vite.config.ts where the $lib alias does not exist
+import {
+	DEFAULT_RULES,
+	RULE_OPTIONS,
+	type CardData,
+	type CardMove,
+	type CardRef,
+	type GameView,
+	type MoveEndpoint,
+	type Phase,
+	type Power,
+	type Rules,
+	type TurnState
+} from '../../shared/types';
 
 export const MAX_PLAYERS = 6;
 const HAND_SIZE = 4;
@@ -33,6 +37,8 @@ export default class Game {
 	players: Player[] = [];
 	deck = new Deck();
 	discards: Card[] = [];
+	/** House rules — set in the lobby, fixed once the first round is dealt. */
+	rules: Rules = { ...DEFAULT_RULES };
 
 	phase: Phase = 'waiting';
 	currentPlayerIndex = 0;
@@ -149,9 +155,22 @@ export default class Game {
 		this.deal();
 	}
 
+	/** Replace the house rules — any field not among its legal options falls back to the default. */
+	setRules(by: Player, incoming: Rules) {
+		if (this.phase !== 'waiting') throw new GameError('Rules can only be changed in the lobby');
+		if (by !== this.host) throw new GameError('Only the host can change the rules');
+		const clean = { ...DEFAULT_RULES };
+		for (const key of Object.keys(RULE_OPTIONS) as (keyof Rules)[]) {
+			const allowed: readonly unknown[] = RULE_OPTIONS[key];
+			if (allowed.includes(incoming?.[key])) Object.assign(clean, { [key]: incoming[key] });
+		}
+		this.rules = clean;
+		this.addLog(`⚙️ ${by.name} adjusted the game rules`);
+	}
+
 	private deal() {
 		this.deck = new Deck();
-		this.deck.loadFullDeck();
+		this.deck.loadFullDeck(this.rules);
 		this.deck.shuffle();
 		this.discards = [];
 		this.drawnCard = null;
@@ -285,7 +304,7 @@ export default class Game {
 		const power = this.activePower!;
 
 		for (const ref of targets) {
-			if (ref.playerId === this.cambioCallerId)
+			if (this.rules.callerLocked && ref.playerId === this.cambioCallerId)
 				throw new GameError('You cannot touch the cards of whoever called Cambio');
 			this.cardAt(ref); // validates the slot
 		}
@@ -325,14 +344,17 @@ export default class Game {
 				this.endTurn();
 				break;
 			}
-			case 'king_swap': {
+			case 'peek_swap': {
+				// look at two cards (your own included), then decide whether to swap them
 				if (targets.length !== 2) throw new GameError('Pick two cards to look at');
 				const [a, b] = targets;
+				if (this.rules.peeking === 'two_players' && a.playerId === b.playerId)
+					throw new GameError('Pick cards of two different players');
 				if (a.playerId === b.playerId && a.index === b.index)
 					throw new GameError('Pick two different cards');
 				this.kingRefs = targets;
 				for (const ref of targets) player.learn(this.cardAt(ref));
-				this.onPeek(targets, player.id, 0); // marked until the king turn resolves
+				this.onPeek(targets, player.id, 0); // marked until the peek turn resolves
 				this.onReveal(
 					[player.id],
 					targets.map((ref) => ({ ref, card: this.cardAt(ref).toData() })),
@@ -340,7 +362,7 @@ export default class Game {
 					0
 				);
 				this.turnState = 'king_decide';
-				this.addLog(`👑 ${player.name} is looking at two cards...`);
+				this.addLog(`👁️ ${player.name} is looking at two cards...`);
 				break;
 			}
 		}
@@ -357,9 +379,9 @@ export default class Game {
 		if (swap) {
 			const [a, b] = this.kingRefs;
 			this.swapCards(a, b);
-			this.addLog(`👑 ${player.name} swapped the two cards they looked at`);
+			this.addLog(`🔀 ${player.name} swapped the two cards they looked at`);
 		} else {
-			this.addLog(`👑 ${player.name} left the two cards where they are`);
+			this.addLog(`${player.name} left the two cards where they are`);
 		}
 		this.endTurn();
 	}
@@ -382,7 +404,7 @@ export default class Game {
 		if (this.pendingGive) throw new GameError('Waiting for a card to be given away');
 		if (player.id === this.cambioCallerId)
 			throw new GameError('You called Cambio — no more flipping for you');
-		if (ref.playerId === this.cambioCallerId)
+		if (this.rules.callerLocked && ref.playerId === this.cambioCallerId)
 			throw new GameError('You cannot touch the cards of whoever called Cambio');
 		const top = this.discardTop;
 		if (!top) throw new GameError('There is nothing on the discard pile yet');
@@ -400,8 +422,17 @@ export default class Game {
 			4000
 		);
 
-		const someoneElseWasFirst = this.flipOwnerId !== null && this.flipOwnerId !== player.id;
-		if (card.rank === top.rank && !someoneElseWasFirst) {
+		// whether this discard is still up for grabs depends on the flip rule:
+		// first_multiple = the fastest player claims it and may keep flipping,
+		// single = one flipped card total, everyone = no race at all
+		const claimed = this.flipOwnerId !== null;
+		const tooSlow =
+			this.rules.flipping === 'everyone'
+				? false
+				: this.rules.flipping === 'single'
+					? claimed
+					: claimed && this.flipOwnerId !== player.id;
+		if (card.rank === top.rank && !tooSlow) {
 			owner.hand[ref.index] = null;
 			this.pushDiscard(card);
 			this.burntCards.add(card); // a flipped duplicate is burnt: nobody may pick it up
@@ -417,7 +448,7 @@ export default class Game {
 				this.addLog(`⚡ ${player.name} flipped ${owner.name}'s ${card.displayName} and now gives them a card`);
 			}
 		} else {
-			const reason = someoneElseWasFirst ? 'was too slow' : 'flipped wrong';
+			const reason = tooSlow ? 'was too slow' : 'flipped wrong';
 			const slot = player.receiveCard(this.drawFromDeck());
 			this.recordMove('deck', { playerId: player.id, index: slot });
 			this.addLog(`❌ ${player.name} ${reason} (${card.displayName} on a ${top.displayName}) and gains a penalty card`);
@@ -528,15 +559,15 @@ export default class Game {
 		this.winnerIds = winners.map((p) => p.id);
 		winners.forEach((p) => p.gamesWon++);
 
-		// points board: everyone banks their hand value, the caller gambles ±5 on top —
-		// -5 for having strictly the least points, +5 when someone else has less
+		// points board: everyone banks their hand value, the caller gambles on top —
+		// a bonus for having strictly the least points, a penalty when someone else has less
 		for (const p of this.players) {
 			let bonus = 0;
 			if (p.id === this.cambioCallerId) {
 				const bestOther = Math.min(...this.players.filter((o) => o !== p).map((o) => o.score));
-				bonus = p.score < bestOther ? -5 : bestOther < p.score ? 5 : 0;
-				if (bonus === -5) this.addLog(`🔔 ${p.name} pulled the Cambio off: -5 bonus points`);
-				if (bonus === 5) this.addLog(`🔔 ${p.name} called Cambio but someone had less: +5 penalty points`);
+				bonus = p.score < bestOther ? this.rules.cambioBonus : bestOther < p.score ? this.rules.cambioPenalty : 0;
+				if (bonus < 0) this.addLog(`🔔 ${p.name} pulled the Cambio off: ${bonus} bonus points`);
+				if (bonus > 0) this.addLog(`🔔 ${p.name} called Cambio but someone had less: +${bonus} penalty points`);
 			}
 			p.roundPoints = p.score + bonus;
 			p.totalPoints += p.roundPoints;
@@ -628,6 +659,7 @@ export default class Game {
 			drawnFrom: this.drawnFrom,
 			activePower: this.activePower,
 			kingRefs: this.kingRefs,
+			rules: this.rules,
 			cambioCallerId: this.cambioCallerId,
 			cambioAllowed: player.knowsWholeHand && player.score <= 5,
 			flipRemainingMs:

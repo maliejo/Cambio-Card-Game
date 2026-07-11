@@ -1,4 +1,5 @@
-import type { CardData, Power, Rank, Suit } from '$lib/shared/types';
+// relative import: this file is loaded by vite.config.ts where the $lib alias does not exist
+import { DEFAULT_RULES, type CardData, type Power, type Rank, type Rules, type Suit } from '../../shared/types';
 
 export default class Card implements CardData {
 	suit: Suit;
@@ -7,19 +8,19 @@ export default class Card implements CardData {
 	value: number;
 	power: Power | null;
 
-	constructor(rank: Rank, suit: Suit) {
+	constructor(rank: Rank, suit: Suit, rules: Rules = DEFAULT_RULES) {
 		this.suit = suit;
 		this.rank = rank;
 		this.shortName = this.rank + this.suit;
-		this.value = this.getValue();
-		this.power = this.getPower();
+		this.value = this.getValue(rules);
+		this.power = this.getPower(rules);
 	}
 
 	get isRed(): boolean {
 		return this.suit === 'H' || this.suit === 'D';
 	}
 
-	getValue(): number {
+	getValue(rules: Rules): number {
 		const numericalValue = parseInt(this.rank);
 		if (Number.isInteger(numericalValue)) return numericalValue;
 
@@ -31,8 +32,8 @@ export default class Card implements CardData {
 			case 'Q':
 				return 12;
 			case 'K':
-				// red kings are the best cards in the game: both together are worth -4
-				return this.isRed ? -2 : 13;
+				// red kings are the best cards in the game, black kings the worst
+				return this.isRed ? rules.redKingValue : rules.blackKingValue;
 			case 'A':
 				return 1;
 			case 'F':
@@ -42,7 +43,7 @@ export default class Card implements CardData {
 		}
 	}
 
-	getPower(): Power | null {
+	getPower(rules: Rules): Power | null {
 		switch (this.rank) {
 			case '7':
 			case '8':
@@ -51,10 +52,12 @@ export default class Card implements CardData {
 			case 'T':
 				return 'peek_other';
 			case 'J':
-			case 'Q':
 				return 'blind_swap';
+			case 'Q':
+				return rules.powers === 'queen' ? 'peek_swap' : 'blind_swap';
 			case 'K':
-				return 'king_swap';
+				// by default the king has no power at all — it is just a bad card
+				return rules.powers === 'king' ? 'peek_swap' : null;
 			default:
 				return null;
 		}

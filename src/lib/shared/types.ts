@@ -2,7 +2,49 @@ export type Suit = 'S' | 'D' | 'H' | 'C';
 export type Rank =
 	| 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K'
 	| 'F'; // F stands for Joker. F as in Funny
-export type Power = 'peek_self' | 'peek_other' | 'blind_swap' | 'king_swap';
+export type Power = 'peek_self' | 'peek_other' | 'blind_swap' | 'peek_swap';
+
+/** House rules, adjustable by the host in the lobby. */
+export interface Rules {
+	redKingValue: number;
+	blackKingValue: number;
+	/**
+	 * Who gets which power: 'queen' = Jack swaps blind, Queen peeks at two cards and
+	 * may swap them, King is just a bad card. 'king' = Jack & Queen swap blind, King peeks & swaps.
+	 */
+	powers: 'queen' | 'king';
+	/**
+	 * Whose cards the peek & swap power may target: 'two_players' = the two cards must belong
+	 * to two different players (yourself included), 'same_player' = any two cards, even two of your own.
+	 */
+	peeking: 'two_players' | 'same_player';
+	/**
+	 * Who may flip a duplicate after a discard: only the fastest player ('first_multiple'
+	 * lets them keep flipping, 'single' allows one card total), or 'everyone' at their leisure.
+	 */
+	flipping: 'first_multiple' | 'single' | 'everyone';
+	/** Whether the Cambio caller's cards are locked — nobody may peek, swap or flip them. */
+	callerLocked: boolean;
+	/** Extra points for the caller: bonus when they truly have the least, penalty otherwise. */
+	cambioBonus: number;
+	cambioPenalty: number;
+}
+
+/** Every legal value per rule — first entry is the default. The server rejects anything else. */
+export const RULE_OPTIONS = {
+	redKingValue: [-2, -1],
+	blackKingValue: [10, 5, 20],
+	powers: ['queen', 'king'],
+	peeking: ['two_players', 'same_player'],
+	flipping: ['first_multiple', 'single', 'everyone'],
+	callerLocked: [true, false],
+	cambioBonus: [-5, -10],
+	cambioPenalty: [5, 10]
+} as const satisfies { [K in keyof Rules]: readonly Rules[K][] };
+
+export const DEFAULT_RULES: Rules = Object.fromEntries(
+	Object.entries(RULE_OPTIONS).map(([key, options]) => [key, options[0]])
+) as unknown as Rules;
 
 export interface CardData {
 	rank: Rank;
@@ -53,8 +95,10 @@ export interface GameView {
 	drawnCard: CardData | null;
 	drawnFrom: 'deck' | 'discard' | null;
 	activePower: Power | null;
-	/** The two cards picked for a king peek — only meaningful to the current player. */
+	/** The two cards picked for a peek-then-swap power — only meaningful to the current player. */
 	kingRefs: CardRef[];
+	/** The house rules this game runs under. */
+	rules: Rules;
 	cambioCallerId: string | null;
 	/** Whether YOU may call Cambio: you have seen every card in your hand AND it is worth ≤5 points. */
 	cambioAllowed: boolean;
@@ -85,6 +129,7 @@ export type ClientMessage =
 			takeover: boolean;
 	  }
 	| { method: 'start' }
+	| { method: 'setRules'; rules: Rules }
 	| { method: 'ready' }
 	| { method: 'cambio' }
 	| { method: 'draw'; from: 'deck' | 'discard' }

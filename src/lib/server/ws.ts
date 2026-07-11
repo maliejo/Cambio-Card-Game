@@ -149,6 +149,9 @@ function handleMessage(client: Client, message: ClientMessage) {
 		case 'start':
 			game.start(player);
 			break;
+		case 'setRules':
+			game.setRules(player, message.rules);
+			break;
 		case 'ready':
 			game.setReady(player);
 			break;

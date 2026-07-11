@@ -74,7 +74,7 @@
 					peek_self: 'peek at one of your own cards',
 					peek_other: "peek at someone else's card",
 					blind_swap: 'pick two cards to swap them blindly',
-					king_swap: 'pick two cards to look at'
+					peek_swap: 'pick two cards to look at'
 				};
 				return myTurn
 					? `✨ Card power! Click to ${labels[v.activePower!]}`

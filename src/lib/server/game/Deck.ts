@@ -1,5 +1,6 @@
 import Card from './Card';
-import type { Rank, Suit } from '$lib/shared/types';
+// relative import: this file is loaded by vite.config.ts where the $lib alias does not exist
+import { DEFAULT_RULES, type Rank, type Rules, type Suit } from '../../shared/types';
 
 export default class Deck {
 	cards: Card[];
@@ -8,7 +9,7 @@ export default class Deck {
 		this.cards = cards;
 	}
 
-	loadFullDeck() {
+	loadFullDeck(rules: Rules = DEFAULT_RULES) {
 		const cardsTemplates = [
 			'AC', '2C', '3C', '4C', '5C', '6C', '7C', '8C', '9C', 'TC', 'JC', 'QC', 'KC',
 			'AD', '2D', '3D', '4D', '5D', '6D', '7D', '8D', '9D', 'TD', 'JD', 'QD', 'KD',
@@ -18,7 +19,7 @@ export default class Deck {
 		];
 
 		cardsTemplates.forEach((template) =>
-			this.cards.push(new Card(template[0] as Rank, template[1] as Suit))
+			this.cards.push(new Card(template[0] as Rank, template[1] as Suit, rules))
 		);
 	}
 
