@@ -208,27 +208,7 @@
 			{/if}
 		</div>
 
-		<!-- game log: inside the table on mobile, where seats never overlap it -->
-		<div class="flex max-w-full flex-col gap-0.5 overflow-hidden sm:hidden">
-			{#each v.log.slice(-3) as entry, i (v.log.length + i)}
-				<span
-					class="truncate text-center text-[10px] leading-tight
-						{entry === v.log.at(-1) ? 'font-medium text-dark/80' : 'text-dark/40'}"
-				>
-					{entry}
-				</span>
-			{/each}
-		</div>
 	</div>
-</div>
-
-<!-- game log: bottom right corner on desktop, where there is plenty of room -->
-<div class="pointer-events-none fixed right-2 bottom-2 hidden w-72 flex-col gap-0.5 text-right sm:flex">
-	{#each v.log.slice(-6) as entry, i (v.log.length + i)}
-		<span class="text-xs {entry === v.log.at(-1) ? 'font-semibold text-dark/80' : 'text-dark/50'}">
-			{entry}
-		</span>
-	{/each}
 </div>
 
 <FlyingCards />
