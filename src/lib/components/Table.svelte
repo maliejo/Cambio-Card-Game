@@ -100,8 +100,6 @@
 	{/each}
 
 	<div class="flex flex-col items-center justify-center gap-2 p-2 sm:gap-3" style="grid-area: table">
-		<p class="max-w-md text-center text-xs font-semibold text-dark sm:text-sm">{status}</p>
-
 		{#if v.phase !== 'finished'}
 			<div class="flex items-start gap-2 sm:gap-4">
 				<!-- draw pile -->
@@ -182,7 +180,8 @@
 			</div>
 		{/if}
 
-		<div class="flex flex-wrap justify-center gap-2">
+		<!-- min-height so appearing/disappearing buttons don't shift the board either -->
+		<div class="flex min-h-8 flex-wrap items-start justify-center gap-2">
 			{#if v.phase === 'initial_peek' && !self.ready}
 				<button class="btn" onclick={() => client.send({ method: 'ready' })}>
 					Got it — I'm ready
@@ -224,15 +223,20 @@
 
 <FlyingCards />
 
-<!-- flip hint, only while the flip race is open -->
-{#if client.showHints && v.phase === 'playing' && !v.pendingGive && client.flipOpen && v.selfId !== v.cambioCallerId}
-	<div class="fixed bottom-2 left-2 max-w-48 text-left text-xs text-dark/50">
-		⚡ Flip race! Tap a card matching the discard — wrong flips cost you a card.
-	</div>
-{/if}
+<!-- status bar: pinned to the top edge, outside the board grid, so the message
+	 can be any length without ever nudging the table or the seats -->
+<div
+	class="pointer-events-none fixed top-1.5 left-1/2 z-30 w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 sm:top-2 sm:max-w-lg"
+>
+	<p
+		class="rounded-full bg-white/80 px-3 py-1 text-center text-xs font-semibold text-dark shadow-sm sm:px-4 sm:py-1.5 sm:text-sm"
+	>
+		{status}
+	</p>
+</div>
 
-<!-- room code -->
-<div class="fixed top-2 left-2 text-xs text-dark/50">
+<!-- room code: bottom corner, so the status bar owns the top edge -->
+<div class="fixed bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-2 text-xs text-dark/50">
 	Room <span class="font-mono font-bold">{v.gameId}</span>
 </div>
 

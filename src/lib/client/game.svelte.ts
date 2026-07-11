@@ -19,6 +19,8 @@ interface Reveal {
 export interface Flight {
 	id: number;
 	card: CardData | 'hidden';
+	/** The face shown at arrival — when it differs, the card turns over mid-flight. */
+	toCard: CardData | 'hidden';
 	from: DOMRect;
 	to: DOMRect;
 	/** Location key of the destination — that spot hides its card while the flight lasts. */
@@ -59,7 +61,12 @@ class GameClient {
 	private suppressResume = false;
 	private perfSent = false;
 	/** Moves whose start position was measured, waiting for the new state to render. */
-	private pendingMoves: { card: CardData | 'hidden'; from: DOMRect; toKey: string }[] = [];
+	private pendingMoves: {
+		card: CardData | 'hidden';
+		startCard: CardData | 'hidden';
+		from: DOMRect;
+		toKey: string;
+	}[] = [];
 
 	connect() {
 		if (this.socket) return;
@@ -158,7 +165,15 @@ class GameClient {
 		for (const move of moves) {
 			const from = cardLocations.get(endpointKey(move.from))?.getBoundingClientRect();
 			if (!from) continue;
-			this.pendingMoves.push({ card: move.card, from, toKey: endpointKey(move.to) });
+			// what the source spot was actually showing: hand slots and the deck lie
+			// face-down, the discard is face-up, the drawn card only for its holder
+			const startCard =
+				move.from === 'discard'
+					? move.card
+					: move.from === 'drawn' && this.isMyTurn
+						? (this.view?.drawnCard ?? 'hidden')
+						: 'hidden';
+			this.pendingMoves.push({ card: move.card, startCard, from, toKey: endpointKey(move.to) });
 		}
 	}
 
@@ -171,9 +186,17 @@ class GameClient {
 		for (const move of moves) {
 			const to = cardLocations.get(move.toKey)?.getBoundingClientRect();
 			if (!to) continue;
+			// what the destination will show — a differing face turns over during the flight
+			const toCard =
+				move.toKey === 'discard'
+					? move.card
+					: move.toKey === 'drawn' && this.isMyTurn
+						? (this.view?.drawnCard ?? 'hidden')
+						: 'hidden';
 			this.flights.push({
 				id: ++this.flightSeq,
-				card: move.card,
+				card: move.startCard,
+				toCard,
 				from: move.from,
 				to,
 				targetKey: move.toKey
