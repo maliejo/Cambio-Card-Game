@@ -7,9 +7,18 @@
 		clickable?: boolean;
 		selected?: boolean;
 		highlighted?: boolean;
+		/** A place the held card can be dropped — softly ringed as an invitation. */
+		droppable?: boolean;
 		onclick?: () => void;
 	}
-	let { card, clickable = false, selected = false, highlighted = false, onclick }: Props = $props();
+	let {
+		card,
+		clickable = false,
+		selected = false,
+		highlighted = false,
+		droppable = false,
+		onclick
+	}: Props = $props();
 
 	// SVGs from github.com/letele/playing-cards (CC0), vendored in static/cards:
 	// "<suit>-<rank>.svg"; both jokers use J-2 (the black one); back.svg is our own
@@ -68,13 +77,25 @@
 </script>
 
 {#if card === null}
-	<div class="aspect-[5/7] w-full rounded-md border-2 border-dashed border-black/20"></div>
+	{#if clickable}
+		<!-- an empty pile can still be a drop target (e.g. discarding onto a fresh pile) -->
+		<button
+			type="button"
+			class="block aspect-[5/7] w-full cursor-pointer rounded-md border-2 border-dashed border-black/20
+				{droppable ? 'ring-2 ring-amber-400/80' : ''}"
+			aria-label="empty pile"
+			{onclick}
+		></button>
+	{:else}
+		<div class="aspect-[5/7] w-full rounded-md border-2 border-dashed border-black/20"></div>
+	{/if}
 {:else}
 	<button
 		type="button"
 		class="block aspect-[5/7] w-full rounded-md transition-transform [perspective:600px]
 			{clickable ? 'cursor-pointer hover:-translate-y-1 hover:drop-shadow-lg' : 'cursor-default'}
-			{selected || highlighted ? '-translate-y-2 scale-105 drop-shadow-[0_10px_12px_rgba(6,1,17,0.45)]' : ''}"
+			{selected || highlighted ? '-translate-y-2 scale-105 drop-shadow-[0_10px_12px_rgba(6,1,17,0.45)]' : ''}
+			{droppable ? 'ring-2 ring-amber-400/80' : ''}"
 		disabled={!clickable}
 		aria-label={label(card)}
 		{onclick}

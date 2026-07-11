@@ -55,6 +55,7 @@
 	<PlayingCard
 		card={client.revealFor(player.id, index) ?? player.hand[index]}
 		clickable={actionFor(player.id, index) !== null}
+		droppable={actionFor(player.id, index) === 'replace'}
 		selected={client.picks.some((p) => p.playerId === player.id && p.index === index)}
 		highlighted={client.revealFor(player.id, index) !== null &&
 			client.view?.phase !== 'initial_peek'}

@@ -23,8 +23,19 @@ export interface Flight {
 	toCard: CardData | 'hidden';
 	from: DOMRect;
 	to: DOMRect;
+	/** How the card lies at each endpoint (side players hold theirs a quarter
+	 *  turn) — when they differ, the card rotates while it flies. */
+	fromAngle: number;
+	toAngle: number;
 	/** Location key of the destination — that spot hides its card while the flight lasts. */
 	targetKey: string;
+}
+
+/** How a card is rotated at a location, read off the slot's own markup. */
+function angleOf(el: Element | undefined): number {
+	const inner = el?.querySelector('[class*="rotate-90"]');
+	if (!inner) return 0;
+	return inner.classList.contains('rotate-90') ? 90 : -90;
 }
 
 /**
@@ -65,6 +76,7 @@ class GameClient {
 		card: CardData | 'hidden';
 		startCard: CardData | 'hidden';
 		from: DOMRect;
+		fromAngle: number;
 		toKey: string;
 	}[] = [];
 
@@ -163,7 +175,8 @@ class GameClient {
 	/** Measure where the moving cards start, while the old layout is still on screen. */
 	private prepareFlights(moves: CardMove[]) {
 		for (const move of moves) {
-			const from = cardLocations.get(endpointKey(move.from))?.getBoundingClientRect();
+			const fromEl = cardLocations.get(endpointKey(move.from));
+			const from = fromEl?.getBoundingClientRect();
 			if (!from) continue;
 			// what the source spot was actually showing: hand slots and the deck lie
 			// face-down, the discard is face-up, the drawn card only for its holder
@@ -173,7 +186,13 @@ class GameClient {
 					: move.from === 'drawn' && this.isMyTurn
 						? (this.view?.drawnCard ?? 'hidden')
 						: 'hidden';
-			this.pendingMoves.push({ card: move.card, startCard, from, toKey: endpointKey(move.to) });
+			this.pendingMoves.push({
+				card: move.card,
+				startCard,
+				from,
+				fromAngle: angleOf(fromEl),
+				toKey: endpointKey(move.to)
+			});
 		}
 	}
 
@@ -184,7 +203,8 @@ class GameClient {
 		this.pendingMoves = [];
 		await tick(); // let Svelte render the new state first, so freshly added slots exist
 		for (const move of moves) {
-			const to = cardLocations.get(move.toKey)?.getBoundingClientRect();
+			const toEl = cardLocations.get(move.toKey);
+			const to = toEl?.getBoundingClientRect();
 			if (!to) continue;
 			// what the destination will show — a differing face turns over during the flight
 			const toCard =
@@ -199,6 +219,8 @@ class GameClient {
 				toCard,
 				from: move.from,
 				to,
+				fromAngle: move.fromAngle,
+				toAngle: angleOf(toEl),
 				targetKey: move.toKey
 			});
 		}

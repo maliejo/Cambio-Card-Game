@@ -31,12 +31,11 @@
 				 beside the laid-out cards without taking layout space, lifted and
 				 tilted toward its holder like a card someone just picked up -->
 			{#if sideways}
-				<!-- side players hold it rotated like their other cards, on the side
-					 of their hand that faces the table -->
+				<!-- side players hold it rotated like their other cards, just above
+					 their layout so it never collides with the name or the table -->
 				<div
-					class="absolute top-1/2 z-10 aspect-[7/5] shrink-0 drop-shadow-lg {handCardHeight()}
-						{orientation === 90 ? 'left-full ml-1.5 sm:ml-2' : 'right-full mr-1.5 sm:mr-2'}"
-					style:transform="translateY(-50%) perspective(600px) rotateY({orientation === 90
+					class="absolute bottom-full left-1/2 z-10 mb-1.5 aspect-[7/5] shrink-0 drop-shadow-lg sm:mb-2 {handCardHeight()}"
+					style:transform="translateX(-50%) perspective(600px) rotateY({orientation === 90
 						? -18
 						: 18}deg) scale(1.05)"
 					style:visibility={client.isFlightTarget('drawn') ? 'hidden' : 'visible'}
@@ -63,9 +62,9 @@
 		{/if}
 	</div>
 	<div
-		class="flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shadow-sm sm:text-sm
+		class="flex max-w-full items-center gap-1 text-xs font-semibold sm:text-sm
 			{sideways ? 'mt-1 sm:mt-1.5' : ''}
-			{isCurrent ? 'animate-pulse bg-primary text-white' : 'bg-white/80 text-dark'}"
+			{isCurrent ? 'animate-pulse text-primary' : 'text-dark'}"
 	>
 		{#if v.winnerIds?.includes(player.id)}<span>👑</span>{/if}
 		<span class="truncate">{player.isBot ? '🤖 ' : ''}{player.name}{isSelf ? ' (you)' : ''}</span>

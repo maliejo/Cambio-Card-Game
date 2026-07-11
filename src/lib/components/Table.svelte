@@ -36,6 +36,8 @@
 	const canDraw = $derived(
 		myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive && !client.peekWait
 	);
+	// while holding a drawn card, the discard pile is a drop target instead of a draw source
+	const holding = $derived(myTurn && v.turnState === 'holding');
 
 	// points board between rounds — fewest total points leads
 	const standings = $derived([...v.players].sort((a, b) => a.totalPoints - b.totalPoints));
@@ -70,7 +72,7 @@
 				return myTurn ? 'Your turn — draw a card' : `${current}'s turn`;
 			case 'holding':
 				return myTurn
-					? 'Click one of your cards to swap it in, or discard the drawn card'
+					? 'Swap it into your hand, or drop it on the discard pile'
 					: `${current} drew a card…`;
 			case 'power': {
 				const labels = {
@@ -91,7 +93,7 @@
 </script>
 
 <div
-	class="grid h-dvh w-screen overflow-hidden pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+	class="grid h-dvh w-screen overflow-hidden pt-8 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pt-10"
 	style:grid-template-areas={LAYOUTS[seatedPlayers.length] ?? LAYOUTS[6]}
 	style:grid-auto-rows="minmax(0, 1fr)"
 >
@@ -127,8 +129,12 @@
 						>
 							<PlayingCard
 								card={v.discardTop}
-								clickable={canDraw && v.discardTop !== null && !v.discardBurnt}
-								onclick={() => client.send({ method: 'draw', from: 'discard' })}
+								clickable={(canDraw && v.discardTop !== null && !v.discardBurnt) || holding}
+								droppable={holding}
+								onclick={() =>
+									client.send(
+										holding ? { method: 'discardDrawn' } : { method: 'draw', from: 'discard' }
+									)}
 							/>
 						</div>
 					</div>
@@ -192,11 +198,6 @@
 					Call Cambio
 				</button>
 			{/if}
-			{#if myTurn && v.turnState === 'holding'}
-				<button class="btn" onclick={() => client.send({ method: 'discardDrawn' })}>
-					Discard drawn card
-				</button>
-			{/if}
 			{#if myTurn && v.turnState === 'power'}
 				<button class="btn bg-gray-500!" onclick={() => client.send({ method: 'skipPower' })}>
 					Skip power
@@ -223,16 +224,10 @@
 
 <FlyingCards />
 
-<!-- status bar: pinned to the top edge, outside the board grid, so the message
-	 can be any length without ever nudging the table or the seats -->
-<div
-	class="pointer-events-none fixed top-1.5 left-1/2 z-30 w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 sm:top-2 sm:max-w-lg"
->
-	<p
-		class="rounded-full bg-white/80 px-3 py-1 text-center text-xs font-semibold text-dark shadow-sm sm:px-4 sm:py-1.5 sm:text-sm"
-	>
-		{status}
-	</p>
+<!-- status bar: a full-width strip along the top edge, outside the board grid,
+	 so the message can be any length without ever nudging the table -->
+<div class="pointer-events-none fixed inset-x-0 top-0 z-30 border-b border-dark/10 bg-white shadow-sm">
+	<p class="px-4 py-1.5 text-center text-xs font-semibold text-dark sm:py-2 sm:text-sm">{status}</p>
 </div>
 
 <!-- room code: bottom corner, so the status bar owns the top edge -->
