@@ -23,11 +23,12 @@ export interface Rules {
 	 * lets them keep flipping, 'single' allows one card total), or 'everyone' at their leisure.
 	 */
 	flipping: 'first_multiple' | 'single' | 'everyone';
+	/** Whether you may keep trying after a wrong flip already cost you a penalty card. */
+	retryFlip: boolean;
 	/** Whether the Cambio caller's cards are locked — nobody may peek, swap or flip them. */
 	callerLocked: boolean;
-	/** Extra points for the caller: bonus when they truly have the least, penalty otherwise. */
-	cambioBonus: number;
-	cambioPenalty: number;
+	/** The caller's gamble: won as a bonus (negative) with the least points, taken as a penalty otherwise. */
+	cambioStake: number;
 }
 
 /** Every legal value per rule — first entry is the default. The server rejects anything else. */
@@ -37,9 +38,9 @@ export const RULE_OPTIONS = {
 	powers: ['queen', 'king'],
 	peeking: ['two_players', 'same_player'],
 	flipping: ['first_multiple', 'single', 'everyone'],
+	retryFlip: [true, false],
 	callerLocked: [true, false],
-	cambioBonus: [-5, -10],
-	cambioPenalty: [5, 10]
+	cambioStake: [5, 10]
 } as const satisfies { [K in keyof Rules]: readonly Rules[K][] };
 
 export const DEFAULT_RULES: Rules = Object.fromEntries(
@@ -104,6 +105,8 @@ export interface GameView {
 	cambioAllowed: boolean;
 	/** How long flipping is still allowed (ms) — flips are only open briefly after a discard. */
 	flipRemainingMs: number;
+	/** How long the current peek still blocks the next draw (ms) — everyone gets to finish looking. */
+	peekRemainingMs: number;
 	pendingGive: { fromId: string; toId: string } | null;
 	winnerIds: string[] | null;
 	log: string[];

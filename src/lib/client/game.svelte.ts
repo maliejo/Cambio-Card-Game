@@ -44,11 +44,14 @@ class GameClient {
 	flights = $state<Flight[]>([]);
 	/** Whether the flip race is currently open (a discard happened moments ago). */
 	flipOpen = $state(false);
+	/** Whether a peek is still on display — drawing waits until everyone finished looking. */
+	peekWait = $state(false);
 	showHints = $state(true);
 
 	private socket: WebSocket | null = null;
 	private errorTimer: ReturnType<typeof setTimeout> | undefined;
 	private flipTimer: ReturnType<typeof setTimeout> | undefined;
+	private peekWaitTimer: ReturnType<typeof setTimeout> | undefined;
 	private revealSeq = 0;
 	private flightSeq = 0;
 	private resumeTried = false;
@@ -237,6 +240,14 @@ class GameClient {
 					this.flipTimer = setTimeout(
 						() => (this.flipOpen = false),
 						message.state.flipRemainingMs
+					);
+				}
+				clearTimeout(this.peekWaitTimer);
+				this.peekWait = message.state.peekRemainingMs > 0;
+				if (this.peekWait) {
+					this.peekWaitTimer = setTimeout(
+						() => (this.peekWait = false),
+						message.state.peekRemainingMs
 					);
 				}
 				// sticky reveals (initial peek, king look) live until the game moves on

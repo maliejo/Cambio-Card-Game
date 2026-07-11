@@ -21,6 +21,8 @@ const HAND_SIZE = 4;
 const LOG_LIMIT = 30;
 /** After a discard, players get this long to flip a matching card. */
 const FLIP_WINDOW_MS = 6000;
+/** How long a peeked card stays revealed — the next draw waits until everyone finished looking. */
+const PEEK_MS = 4000;
 
 /** Rule violations and bad requests — the message is safe to show to the player. */
 export class GameError extends Error {}
@@ -56,6 +58,10 @@ export default class Game {
 	burntCards = new Set<Card>();
 	/** Timestamp until which flipping is allowed. Opens on every discard, then expires. */
 	flipUntil: number | null = null;
+	/** Timestamp until which a peek is still on display — no drawing while people are looking. */
+	peekUntil: number | null = null;
+	/** Who already flipped wrong this race — with the retryFlip rule off they are locked out. */
+	failedFlippers = new Set<string>();
 	winnerIds: string[] | null = null;
 	log: string[] = [];
 
@@ -181,6 +187,8 @@ export default class Game {
 		this.pendingGive = null;
 		this.flipOwnerId = null;
 		this.flipUntil = null;
+		this.peekUntil = null;
+		this.failedFlippers.clear();
 		this.burntCards.clear();
 		this.winnerIds = null;
 
@@ -233,8 +241,15 @@ export default class Game {
 		if (this.turnState !== state) throw new GameError('You cannot do that right now');
 	}
 
+	/** Nobody moves on while a peeked card is still on display — everyone gets to see it. */
+	private assertNoRunningPeek() {
+		if (this.peekUntil && Date.now() < this.peekUntil)
+			throw new GameError('Wait — someone is still looking at a card');
+	}
+
 	callCambio(player: Player) {
 		this.assertTurn(player, 'awaiting_draw');
+		this.assertNoRunningPeek();
 		if (this.cambioCallerId) throw new GameError('Cambio has already been called');
 		// an unseen card might be anything — you must know your whole hand to call
 		if (!player.knowsWholeHand)
@@ -250,6 +265,7 @@ export default class Game {
 
 	draw(player: Player, from: 'deck' | 'discard') {
 		this.assertTurn(player, 'awaiting_draw');
+		this.assertNoRunningPeek();
 		if (from === 'discard') {
 			const top = this.discardTop;
 			if (top && this.burntCards.has(top))
@@ -315,8 +331,9 @@ export default class Game {
 				if (targets.length !== 1 || ref.playerId !== player.id)
 					throw new GameError('Pick one of your own cards to peek at');
 				player.learn(this.cardAt(ref));
-				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], 'Your card', 6000);
-				this.onPeek([ref], player.id, 6000);
+				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], 'Your card', PEEK_MS);
+				this.onPeek([ref], player.id, PEEK_MS);
+				this.peekUntil = Date.now() + PEEK_MS;
 				this.addLog(`👁️ ${player.name} peeked at one of their own cards`);
 				this.endTurn();
 				break;
@@ -326,8 +343,9 @@ export default class Game {
 				if (targets.length !== 1 || ref.playerId === player.id)
 					throw new GameError("Pick someone else's card to peek at");
 				player.learn(this.cardAt(ref)); // if it ever swaps into their hand, they know it
-				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], `${this.playerById(ref.playerId).name}'s card`, 6000);
-				this.onPeek([ref], player.id, 6000);
+				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], `${this.playerById(ref.playerId).name}'s card`, PEEK_MS);
+				this.onPeek([ref], player.id, PEEK_MS);
+				this.peekUntil = Date.now() + PEEK_MS;
 				this.addLog(`👁️ ${player.name} peeked at one of ${this.playerById(ref.playerId).name}'s cards`);
 				this.endTurn();
 				break;
@@ -410,6 +428,8 @@ export default class Game {
 		if (!top) throw new GameError('There is nothing on the discard pile yet');
 		if (!this.flipUntil || Date.now() > this.flipUntil)
 			throw new GameError('Too late — you can only flip right after a card was discarded');
+		if (!this.rules.retryFlip && this.failedFlippers.has(player.id))
+			throw new GameError('You already flipped wrong — no more tries until the next discard');
 		const card = this.cardAt(ref);
 		const owner = this.playerById(ref.playerId);
 
@@ -434,7 +454,7 @@ export default class Game {
 					: claimed && this.flipOwnerId !== player.id;
 		if (card.rank === top.rank && !tooSlow) {
 			owner.hand[ref.index] = null;
-			this.pushDiscard(card);
+			this.pushDiscard(card, true);
 			this.burntCards.add(card); // a flipped duplicate is burnt: nobody may pick it up
 			this.flipOwnerId = player.id; // pushDiscard resets it, claim it back
 			this.recordMove(ref, 'discard', card);
@@ -449,6 +469,7 @@ export default class Game {
 			}
 		} else {
 			const reason = tooSlow ? 'was too slow' : 'flipped wrong';
+			this.failedFlippers.add(player.id);
 			const slot = player.receiveCard(this.drawFromDeck());
 			this.recordMove('deck', { playerId: player.id, index: slot });
 			this.addLog(`❌ ${player.name} ${reason} (${card.displayName} on a ${top.displayName}) and gains a penalty card`);
@@ -481,12 +502,15 @@ export default class Game {
 
 	// ---------- turn/round bookkeeping ----------
 
-	private pushDiscard(card: Card) {
+	private pushDiscard(card: Card, fromFlip = false) {
 		this.discards.push(card);
 		// the discard pile is face-up: everyone has now seen this card
 		for (const p of this.players) p.learn(card);
 		this.flipOwnerId = null;
 		this.flipUntil = Date.now() + FLIP_WINDOW_MS;
+		// a flipped duplicate merely extends the running race — a fresh
+		// discard starts a new one, where earlier wrong flips are forgiven
+		if (!fromFlip) this.failedFlippers.clear();
 	}
 
 	private drawFromDeck(): Card {
@@ -565,7 +589,7 @@ export default class Game {
 			let bonus = 0;
 			if (p.id === this.cambioCallerId) {
 				const bestOther = Math.min(...this.players.filter((o) => o !== p).map((o) => o.score));
-				bonus = p.score < bestOther ? this.rules.cambioBonus : bestOther < p.score ? this.rules.cambioPenalty : 0;
+				bonus = p.score < bestOther ? -this.rules.cambioStake : bestOther < p.score ? this.rules.cambioStake : 0;
 				if (bonus < 0) this.addLog(`🔔 ${p.name} pulled the Cambio off: ${bonus} bonus points`);
 				if (bonus > 0) this.addLog(`🔔 ${p.name} called Cambio but someone had less: +${bonus} penalty points`);
 			}
@@ -665,6 +689,10 @@ export default class Game {
 			flipRemainingMs:
 				this.phase === 'playing' && this.flipUntil
 					? Math.max(0, this.flipUntil - Date.now())
+					: 0,
+			peekRemainingMs:
+				this.phase === 'playing' && this.peekUntil
+					? Math.max(0, this.peekUntil - Date.now())
 					: 0,
 			pendingGive: this.pendingGive
 				? { fromId: this.pendingGive.fromId, toId: this.pendingGive.toId }

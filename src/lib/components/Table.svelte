@@ -33,7 +33,9 @@
 		return 180; // across the table
 	}
 
-	const canDraw = $derived(myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive);
+	const canDraw = $derived(
+		myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive && !client.peekWait
+	);
 
 	// points board between rounds — fewest total points leads
 	const standings = $derived([...v.players].sort((a, b) => a.totalPoints - b.totalPoints));
@@ -64,6 +66,7 @@
 		}
 		switch (v.turnState) {
 			case 'awaiting_draw':
+				if (client.peekWait) return '👁️ Wait until everyone has seen the peeked card…';
 				return myTurn ? 'Your turn — draw a card' : `${current}'s turn`;
 			case 'holding':
 				return myTurn
