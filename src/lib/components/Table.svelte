@@ -36,6 +36,8 @@
 	const canDraw = $derived(
 		myTurn && v.turnState === 'awaiting_draw' && !v.pendingGive && !client.peekWait
 	);
+	const canDrawDeck = $derived(canDraw && v.deckCount + v.discardCount > 1);
+	const canDrawDiscard = $derived(canDraw && v.discardTop !== null && !v.discardBurnt);
 	// while holding a drawn card, the discard pile is a drop target instead of a draw source
 	const holding = $derived(myTurn && v.turnState === 'holding');
 
@@ -108,7 +110,8 @@
 				<div class="text-center {pileCardWidth()}" use:cardLocation={'deck'}>
 					<PlayingCard
 						card={v.deckCount > 0 ? 'hidden' : null}
-						clickable={canDraw && v.deckCount + v.discardCount > 1}
+						clickable={canDrawDeck}
+						hinted={canDrawDeck}
 						onclick={() => client.send({ method: 'draw', from: 'deck' })}
 					/>
 					<span class="text-xs text-dark/60">deck</span>
@@ -129,8 +132,8 @@
 						>
 							<PlayingCard
 								card={v.discardTop}
-								clickable={(canDraw && v.discardTop !== null && !v.discardBurnt) || holding}
-								droppable={holding}
+								clickable={canDrawDiscard || holding}
+								hinted={canDrawDiscard || holding}
 								onclick={() =>
 									client.send(
 										holding ? { method: 'discardDrawn' } : { method: 'draw', from: 'discard' }
