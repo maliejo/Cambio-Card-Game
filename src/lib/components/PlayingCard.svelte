@@ -50,6 +50,13 @@
 			midFlip = false;
 			return;
 		}
+		if ((card === 'hidden') === (shownFace === 'hidden')) {
+			// same side stays up (e.g. the discard top changing to another face-up
+			// card) — only actually turning a card over animates
+			shownFace = card;
+			midFlip = false;
+			return;
+		}
 		midFlip = true;
 		clearTimeout(flipTimer);
 		flipTimer = setTimeout(() => {

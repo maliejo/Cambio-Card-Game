@@ -619,6 +619,7 @@ export default class Game {
 			})),
 			deckCount: this.deck.count,
 			discardTop: this.discardTop?.toData() ?? null,
+			discardUnder: this.discards.slice(-3, -1).map((card) => card.toData()),
 			discardBurnt: this.discardTop ? this.burntCards.has(this.discardTop) : false,
 			discardCount: this.discards.length,
 			currentPlayerId: this.currentPlayer?.id ?? null,

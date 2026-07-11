@@ -42,6 +42,8 @@ export interface GameView {
 	players: PlayerView[];
 	deckCount: number;
 	discardTop: CardData | null;
+	/** Up to two cards peeking out beneath the top discard, deepest first — purely visual. */
+	discardUnder: CardData[];
 	/** The top discard is a flipped duplicate ("burnt") — it cannot be drawn. */
 	discardBurnt: boolean;
 	discardCount: number;

@@ -37,6 +37,13 @@
 
 	// points board between rounds — fewest total points leads
 	const standings = $derived([...v.players].sort((a, b) => a.totalPoints - b.totalPoints));
+
+	/** Stable per-card tilt so the discard pile looks casually thrown together. */
+	function tilt(card: { rank: string; suit: string }): number {
+		let h = 0;
+		for (const ch of card.rank + card.suit) h = (h * 31 + ch.charCodeAt(0)) % 997;
+		return (h % 13) - 6; // -6° … +6°
+	}
 	const cambioBonus = (p: (typeof v.players)[number]) =>
 		p.roundPoints !== null && p.score !== null ? p.roundPoints - p.score : 0;
 
@@ -104,17 +111,26 @@
 					<span class="text-xs text-dark/60">deck</span>
 				</div>
 
-				<!-- discard pile -->
-				<div
-					class="text-center {pileCardWidth()}"
-					style:visibility={client.isFlightTarget('discard') ? 'hidden' : 'visible'}
-					use:cardLocation={'discard'}
-				>
-					<PlayingCard
-						card={v.discardTop}
-						clickable={canDraw && v.discardTop !== null && !v.discardBurnt}
-						onclick={() => client.send({ method: 'draw', from: 'discard' })}
-					/>
+				<!-- discard pile: a casually thrown-together stack, all face up -->
+				<div class="text-center {pileCardWidth()}" use:cardLocation={'discard'}>
+					<div class="relative">
+						{#each v.discardUnder as under, i (i)}
+							<div class="absolute inset-0" style:transform="rotate({tilt(under)}deg)">
+								<PlayingCard card={under} />
+							</div>
+						{/each}
+						<div
+							class="relative"
+							style:transform="rotate({v.discardTop ? tilt(v.discardTop) : 0}deg)"
+							style:visibility={client.isFlightTarget('discard') ? 'hidden' : 'visible'}
+						>
+							<PlayingCard
+								card={v.discardTop}
+								clickable={canDraw && v.discardTop !== null && !v.discardBurnt}
+								onclick={() => client.send({ method: 'draw', from: 'discard' })}
+							/>
+						</div>
+					</div>
 					<span class="text-xs text-dark/60">{v.discardBurnt ? '🔥 burnt' : 'discard'}</span>
 				</div>
 			</div>
