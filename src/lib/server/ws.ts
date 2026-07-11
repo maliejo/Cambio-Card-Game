@@ -59,6 +59,16 @@ function wireReveals(game: Game) {
 			}
 		});
 	};
+	// which slots were looked at is public information — everyone gets the marker
+	game.onPeek = (refs, byId, durationMs) => {
+		queueMicrotask(() => {
+			for (const player of game.players) {
+				const client = CLIENTS.get(player.id);
+				if (client?.player.connected)
+					send(client.ws, { method: 'peeked', refs, byId, durationMs });
+			}
+		});
+	};
 }
 
 function createGame(client: Client, name: string) {

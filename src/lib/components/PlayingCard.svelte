@@ -38,10 +38,16 @@
 	let flipTimer: ReturnType<typeof setTimeout> | undefined;
 
 	$effect(() => {
-		if (faceKey(card) === faceKey(shownFace)) return;
+		if (faceKey(card) === faceKey(shownFace)) {
+			// the face may have changed back while a flip was pending — settle upright,
+			// otherwise the card stays stuck edge-on at 90° (invisible)
+			midFlip = false;
+			return;
+		}
 		if (card === null || shownFace === null) {
 			// a slot appearing or emptying is not a flip
 			shownFace = card;
+			midFlip = false;
 			return;
 		}
 		midFlip = true;

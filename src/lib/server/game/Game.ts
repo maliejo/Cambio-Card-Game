@@ -55,6 +55,8 @@ export default class Game {
 
 	/** Wired up by the transport layer to push transient card reveals to specific players. */
 	onReveal: RevealFn = () => {};
+	/** Wired up by the transport layer to show EVERYONE which slots someone looked at. */
+	onPeek: (refs: CardRef[], byId: string, durationMs: number) => void = () => {};
 	/** Wired up by the transport layer to report game stats to analytics. */
 	onAnalytics: (name: string, data: Record<string, number>) => void = () => {};
 
@@ -295,6 +297,7 @@ export default class Game {
 					throw new GameError('Pick one of your own cards to peek at');
 				player.learn(this.cardAt(ref));
 				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], 'Your card', 6000);
+				this.onPeek([ref], player.id, 6000);
 				this.addLog(`👁️ ${player.name} peeked at one of their own cards`);
 				this.endTurn();
 				break;
@@ -305,6 +308,7 @@ export default class Game {
 					throw new GameError("Pick someone else's card to peek at");
 				player.learn(this.cardAt(ref)); // if it ever swaps into their hand, they know it
 				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], `${this.playerById(ref.playerId).name}'s card`, 6000);
+				this.onPeek([ref], player.id, 6000);
 				this.addLog(`👁️ ${player.name} peeked at one of ${this.playerById(ref.playerId).name}'s cards`);
 				this.endTurn();
 				break;
@@ -328,6 +332,7 @@ export default class Game {
 					throw new GameError('Pick two different cards');
 				this.kingRefs = targets;
 				for (const ref of targets) player.learn(this.cardAt(ref));
+				this.onPeek(targets, player.id, 0); // marked until the king turn resolves
 				this.onReveal(
 					[player.id],
 					targets.map((ref) => ({ ref, card: this.cardAt(ref).toData() })),

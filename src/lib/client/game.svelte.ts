@@ -36,6 +36,8 @@ class GameClient {
 	error = $state<string | null>(null);
 	/** Temporarily face-up cards, keyed by `playerId:index` (peeks, flips, king looks). */
 	reveals = $state<Record<string, Reveal>>({});
+	/** Slots someone looked at, keyed by `playerId:index` — everyone sees WHICH card was peeked. */
+	peeks = $state<Record<string, { byId: string; sticky: boolean; seq: number }>>({});
 	/** Locally accumulated picks for two-card powers (swaps). */
 	picks = $state<CardRef[]>([]);
 	/** Cards currently flying across the table. */
@@ -125,6 +127,13 @@ class GameClient {
 
 	revealFor(playerId: string, index: number): CardData | null {
 		return this.reveals[`${playerId}:${index}`]?.card ?? null;
+	}
+
+	/** Name of the player who just looked at this slot, or null. */
+	peekedBy(playerId: string, index: number): string | null {
+		const peek = this.peeks[`${playerId}:${index}`];
+		if (!peek) return null;
+		return this.view?.players.find((p) => p.id === peek.byId)?.name ?? null;
 	}
 
 	setShowHints(show: boolean) {
@@ -239,6 +248,9 @@ class GameClient {
 					for (const key of Object.keys(this.reveals)) {
 						if (this.reveals[key].sticky) delete this.reveals[key];
 					}
+					for (const key of Object.keys(this.peeks)) {
+						if (this.peeks[key].sticky) delete this.peeks[key];
+					}
 				}
 				this.launchFlights();
 				break;
@@ -251,6 +263,18 @@ class GameClient {
 					if (message.durationMs > 0) {
 						setTimeout(() => {
 							if (this.reveals[key]?.seq === seq) delete this.reveals[key];
+						}, message.durationMs);
+					}
+				}
+				break;
+			case 'peeked':
+				for (const ref of message.refs) {
+					const key = `${ref.playerId}:${ref.index}`;
+					const seq = ++this.revealSeq;
+					this.peeks[key] = { byId: message.byId, sticky: message.durationMs === 0, seq };
+					if (message.durationMs > 0) {
+						setTimeout(() => {
+							if (this.peeks[key]?.seq === seq) delete this.peeks[key];
 						}, message.durationMs);
 					}
 				}

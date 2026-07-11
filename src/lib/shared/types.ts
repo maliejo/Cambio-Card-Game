@@ -114,4 +114,12 @@ export type ServerMessage =
 			/** 0 = stays visible until the current phase/turn state ends */
 			durationMs: number;
 	  }
+	/** Someone looked at these cards — everyone sees WHICH slots, only the peeker sees the faces. */
+	| {
+			method: 'peeked';
+			refs: CardRef[];
+			byId: string;
+			/** 0 = stays marked until the current phase/turn state ends */
+			durationMs: number;
+	  }
 	| { method: 'error'; message: string };

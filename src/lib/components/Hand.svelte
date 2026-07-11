@@ -21,8 +21,9 @@
 </script>
 
 {#snippet slot(index: number)}
+	{@const peeker = client.peekedBy(player.id, index)}
 	<div
-		class="shrink-0 {handCardWidth(large)}"
+		class="relative shrink-0 {handCardWidth(large)}"
 		style:visibility={client.isFlightTarget(`${player.id}:${index}`) ? 'hidden' : 'visible'}
 		use:cardLocation={`${player.id}:${index}`}
 	>
@@ -34,6 +35,15 @@
 				client.view?.phase !== 'initial_peek'}
 			onclick={() => handleCardClick(player.id, index)}
 		/>
+		<!-- who looked at a card is public — everyone sees the eye on that exact slot -->
+		{#if peeker && player.hand[index]}
+			<span
+				class="pointer-events-none absolute -top-1.5 -right-1.5 z-10 rounded-full bg-dark px-1 text-[10px] leading-4 shadow-md"
+				title="{peeker} looked at this card"
+			>
+				👁️
+			</span>
+		{/if}
 	</div>
 {/snippet}
 
