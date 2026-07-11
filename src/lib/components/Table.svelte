@@ -138,8 +138,12 @@
 				</div>
 			</div>
 		{:else}
-			<!-- points board: this round + running total across rounds -->
-			<table class="rounded-xl bg-white/80 text-xs shadow-sm sm:text-sm">
+			<!-- points board: on the felt on desktop, a popup on mobile so it doesn't squeeze the seats -->
+			<div
+				class="flex flex-col items-center gap-2 max-sm:fixed max-sm:inset-0 max-sm:z-40 max-sm:justify-center max-sm:gap-3 max-sm:bg-black/50 max-sm:p-4"
+			>
+				<p class="text-center text-xs font-semibold text-white sm:hidden">{status}</p>
+				<table class="rounded-xl bg-white/80 text-xs shadow-sm max-sm:bg-white sm:text-sm">
 				<thead>
 					<tr class="text-[10px] text-dark/50 uppercase">
 						<th class="px-3 pt-2 pb-1 text-left font-medium">player</th>
@@ -169,7 +173,13 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
+				</table>
+				{#if v.hostId === v.selfId}
+					<button class="btn sm:hidden" onclick={() => client.send({ method: 'playAgain' })}>
+						Play another round
+					</button>
+				{/if}
+			</div>
 		{/if}
 
 		<div class="flex flex-wrap justify-center gap-2">
@@ -202,7 +212,8 @@
 				</button>
 			{/if}
 			{#if v.phase === 'finished' && v.hostId === v.selfId}
-				<button class="btn" onclick={() => client.send({ method: 'playAgain' })}>
+				<!-- on mobile this button lives inside the results popup instead -->
+				<button class="btn max-sm:hidden" onclick={() => client.send({ method: 'playAgain' })}>
 					Play another round
 				</button>
 			{/if}

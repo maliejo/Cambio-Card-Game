@@ -23,17 +23,23 @@
 	class="flex min-h-0 flex-col items-center justify-center gap-1 p-1 sm:p-2"
 	style:grid-area={area}
 >
-	<div class="flex items-center gap-1.5 sm:gap-3">
+	<div class="relative flex items-center">
+		<Hand {player} large={isSelf} {orientation} />
 		{#if holdsDrawnCard}
+			<!-- the drawn card is IN the player's hand, not on the table: it floats
+				 beside the laid-out cards without taking layout space, lifted and
+				 tilted toward the viewer like a card someone just picked up -->
 			<div
-				class="shrink-0 {handCardWidth(isSelf)}"
+				class="absolute top-1/2 left-full z-10 ml-1.5 shrink-0 drop-shadow-lg sm:ml-2 {handCardWidth(
+					isSelf
+				)}"
+				style:transform="translateY(-50%) perspective(600px) rotateX(-18deg) scale(1.05)"
 				style:visibility={client.isFlightTarget('drawn') ? 'hidden' : 'visible'}
 				use:cardLocation={'drawn'}
 			>
 				<PlayingCard card={isSelf ? (v.drawnCard ?? 'hidden') : 'hidden'} highlighted />
 			</div>
 		{/if}
-		<Hand {player} large={isSelf} {orientation} />
 	</div>
 	<div
 		class="flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shadow-sm sm:text-sm

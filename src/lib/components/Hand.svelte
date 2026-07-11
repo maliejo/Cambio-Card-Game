@@ -14,42 +14,37 @@
 	}
 	let { player, large = false, orientation = 0 }: Props = $props();
 
-	// two rows as the OWNER sees them: the memorized cards (2, 3) stay bottom-left,
-	// extra cards (penalties, gifts) alternate between the rows. Emptied slots are
-	// dropped entirely so the remaining cards slide together — no gaps.
-	const ownRows = $derived.by(() => {
-		const top = [0, 1];
-		const bottom = [2, 3].filter((i) => i < player.hand.length);
-		for (let i = 4; i < player.hand.length; i++) {
-			(top.length <= bottom.length ? top : bottom).push(i);
-		}
-		return [
-			top.filter((i) => player.hand[i] !== null),
-			bottom.filter((i) => player.hand[i] !== null)
+	// columns as the OWNER sees them, each [top, bottom]: the base 2x2 grid is
+	// (0,2) and (1,3), extra cards (penalties, gifts) pair up into new columns.
+	// The cards lie on the table: a flipped-away card leaves a GAP so nothing
+	// shifts around — only a fully emptied column is removed.
+	const ownCols = $derived.by(() => {
+		const pairs: [number, number][] = [
+			[0, 2],
+			[1, 3]
 		];
+		for (let i = 4; i < player.hand.length; i += 2) pairs.push([i, i + 1]);
+		const cols: [number | null, number | null][] = [];
+		for (const [t, b] of pairs) {
+			const top = player.hand[t] != null ? t : null;
+			const bottom = player.hand[b] != null ? b : null;
+			if (top !== null || bottom !== null) cols.push([top, bottom]);
+		}
+		return cols;
 	});
 
-	// a strict grid, rotated to where the owner sits: across = upside down,
-	// left/right edge = a quarter turn. Rows/columns of unequal length are
-	// flush-aligned towards the owner's row start, so everything stays lined up.
-	const layout = $derived.by(() => {
-		const [top, bottom] = ownRows;
+	// rotated to where the owner sits: across = upside down, left/right = a quarter
+	// turn (the owner's columns become my rows)
+	const grid = $derived.by(() => {
 		switch (orientation) {
 			case 180:
-				return {
-					rows: [[...bottom].reverse(), [...top].reverse()].filter((r) => r.length),
-					flushEnd: true
-				};
-			// sideways seats: the owner's rows become my columns
+				return { cols: [...ownCols].reverse().map(([t, b]) => [b, t]) };
 			case 90:
-				return { cols: [bottom, top].filter((c) => c.length), flushEnd: false };
+				return { rows: ownCols.map(([t, b]) => [b, t]) };
 			case -90:
-				return {
-					cols: [[...top].reverse(), [...bottom].reverse()].filter((c) => c.length),
-					flushEnd: true
-				};
+				return { rows: [...ownCols].reverse() };
 			default:
-				return { rows: [top, bottom].filter((r) => r.length), flushEnd: false };
+				return { cols: ownCols };
 		}
 	});
 
@@ -107,19 +102,32 @@
 	{/if}
 {/snippet}
 
-{#if layout.rows}
-	<div class="flex flex-col gap-1.5 sm:gap-2 {layout.flushEnd ? 'items-end' : 'items-start'}">
-		{#each layout.rows as row, r (r)}
+{#snippet gap()}
+	<!-- an emptied slot: invisible, but it keeps its spot on the table -->
+	{#if sideways}
+		<div class="aspect-[7/5] shrink-0 {handCardHeight()}"></div>
+	{:else}
+		<div class="aspect-[5/7] shrink-0 {handCardWidth(large)}"></div>
+	{/if}
+{/snippet}
+
+{#if grid.rows}
+	<div class="flex flex-col gap-1.5 sm:gap-2">
+		{#each grid.rows as row, r (r)}
 			<div class="flex gap-1.5 sm:gap-2">
-				{#each row as index (index)}{@render slot(index)}{/each}
+				{#each row as index, c (c)}
+					{#if index !== null}{@render slot(index)}{:else}{@render gap()}{/if}
+				{/each}
 			</div>
 		{/each}
 	</div>
 {:else}
-	<div class="flex gap-1.5 sm:gap-2 {layout.flushEnd ? 'items-end' : 'items-start'}">
-		{#each layout.cols ?? [] as col, c (c)}
+	<div class="flex gap-1.5 sm:gap-2">
+		{#each grid.cols ?? [] as col, c (c)}
 			<div class="flex flex-col gap-1.5 sm:gap-2">
-				{#each col as index (index)}{@render slot(index)}{/each}
+				{#each col as index, r (r)}
+					{#if index !== null}{@render slot(index)}{:else}{@render gap()}{/if}
+				{/each}
 			</div>
 		{/each}
 	</div>
