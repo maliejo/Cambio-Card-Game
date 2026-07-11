@@ -40,7 +40,7 @@
 			{isCurrent ? 'animate-pulse bg-primary text-white' : 'bg-white/80 text-dark'}"
 	>
 		{#if v.winnerIds?.includes(player.id)}<span>👑</span>{/if}
-		<span class="truncate">{player.name}{isSelf ? ' (you)' : ''}</span>
+		<span class="truncate">{player.isBot ? '🤖 ' : ''}{player.name}{isSelf ? ' (you)' : ''}</span>
 		{#if player.gamesWon > 0}<span class="text-[10px]" title="rounds won">🏆{player.gamesWon}</span>{/if}
 		{#if v.cambioCallerId === player.id}
 			<span class="rounded-full bg-danger px-1.5 text-[10px] text-white">CAMBIO</span>

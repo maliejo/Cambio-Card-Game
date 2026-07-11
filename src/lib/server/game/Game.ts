@@ -103,12 +103,18 @@ export default class Game {
 	}
 
 	static generateUID(): string {
-		// short, human friendly, no ambiguous characters (0/O, 1/I/L)
-		const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-		return Array.from(
-			{ length: 6 },
+		// short, human friendly, no ambiguous characters (0/O, 1/I/L);
+		// one guaranteed digit keeps the code from spelling anything rude
+		const letters = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+		const digits = '23456789';
+		const alphabet = letters + digits;
+		const chars = Array.from(
+			{ length: 4 },
 			() => alphabet[Math.floor(Math.random() * alphabet.length)]
-		).join('');
+		);
+		chars[Math.floor(Math.random() * chars.length)] =
+			digits[Math.floor(Math.random() * digits.length)];
+		return chars.join('');
 	}
 
 	get host(): Player | null {
@@ -664,6 +670,7 @@ export default class Game {
 			players: this.players.map((p) => ({
 				id: p.id,
 				name: p.name ?? '???',
+				isBot: p.isBot,
 				connected: p.connected,
 				ready: p.ready,
 				gamesWon: p.gamesWon,

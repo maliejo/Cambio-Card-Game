@@ -47,6 +47,10 @@ export const DEFAULT_RULES: Rules = Object.fromEntries(
 	Object.entries(RULE_OPTIONS).map(([key, options]) => [key, options[0]])
 ) as unknown as Rules;
 
+/** How strong practice-mode bots play: mostly their reaction speed and accuracy. */
+export type BotDifficulty = 'easy' | 'medium' | 'hard';
+export const BOT_DIFFICULTIES: readonly BotDifficulty[] = ['easy', 'medium', 'hard'];
+
 export interface CardData {
 	rank: Rank;
 	suit: Suit;
@@ -66,6 +70,7 @@ export interface CardRef {
 export interface PlayerView {
 	id: string;
 	name: string;
+	isBot: boolean;
 	connected: boolean;
 	ready: boolean;
 	gamesWon: number;
@@ -125,6 +130,8 @@ export interface CardMove {
 export type ClientMessage =
 	| { method: 'create'; name: string }
 	| { method: 'join'; gameId: string; name: string }
+	/** Solo practice: a fresh game against three bots that starts immediately. */
+	| { method: 'practice'; name: string; difficulty: BotDifficulty }
 	| {
 			method: 'resume';
 			token: string;

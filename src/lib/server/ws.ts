@@ -2,8 +2,9 @@ import type { IncomingMessage } from 'node:http';
 import type { WebSocket, WebSocketServer } from 'ws';
 import Game, { GameError, MAX_PLAYERS } from './game/Game';
 import Player from './game/Player';
+import { BotManager, PROFILES } from './bots';
 import { trackEvent, type Visitor } from './analytics';
-import type { ClientMessage, ServerMessage } from '$lib/shared/types';
+import type { BotDifficulty, ClientMessage, ServerMessage } from '$lib/shared/types';
 
 interface Client {
 	ws: WebSocket;
@@ -15,6 +16,9 @@ interface Client {
 
 const GAMES = new Map<string, Game>();
 const CLIENTS = new Map<string, Client>();
+const bots = new BotManager((game) => broadcastState(game));
+/** Practice games whose human left — deleted after a grace period unless they resume. */
+const DOOMED = new Map<string, ReturnType<typeof setTimeout>>();
 
 function send(ws: WebSocket, data: ServerMessage) {
 	try {
@@ -35,6 +39,7 @@ function broadcastState(game: Game) {
 		if (moves.length) send(client.ws, { method: 'moves', moves });
 		send(client.ws, { method: 'state', state: game.viewFor(player) });
 	}
+	bots.onState(game); // every state change lets the bots (re)plan their next move
 }
 
 function trackPerf(client: Client, metrics: Record<string, number>) {
@@ -94,6 +99,17 @@ function joinGame(client: Client, gameId: string, name: string) {
 	console.log('player joined game:', client.player.name, game.uid);
 }
 
+/** Solo practice: a private game against three bots that starts immediately. */
+function createPracticeGame(client: Client, name: string, difficulty: BotDifficulty) {
+	if (!PROFILES[difficulty]) throw new GameError('Unknown difficulty');
+	if (client.game) throw new GameError('You are already in a game');
+	createGame(client, name);
+	const game = client.game!;
+	bots.addBots(game, difficulty, 3);
+	game.start(client.player);
+	trackEvent('practice_started', { difficulty }, client.visitor);
+}
+
 /**
  * Rebind a fresh connection to the disconnected player it used to be.
  * The token is the old clientId, remembered by the browser in localStorage.
@@ -121,6 +137,12 @@ function resume(client: Client, token: string, takeover: boolean) {
 			CLIENTS.set(token, client);
 			client.player = player;
 			client.game = game;
+			// the human is back — a doomed practice game is saved
+			const doom = DOOMED.get(game.uid);
+			if (doom) {
+				clearTimeout(doom);
+				DOOMED.delete(game.uid);
+			}
 			game.handleReconnect(player);
 			send(client.ws, { method: 'connected', clientId: token });
 			broadcastState(game);
@@ -137,8 +159,10 @@ function handleMessage(client: Client, message: ClientMessage) {
 	if (message.method === 'perf') return trackPerf(client, message.metrics ?? {});
 	if (message.method === 'resume')
 		return resume(client, message.token, message.takeover === true);
-	if (message.method === 'create' || message.method === 'join') {
+	if (message.method === 'create' || message.method === 'join' || message.method === 'practice') {
 		if (message.method === 'create') createGame(client, message.name);
+		else if (message.method === 'practice')
+			createPracticeGame(client, message.name, message.difficulty);
 		else joinGame(client, message.gameId, message.name);
 		return broadcastState(client.game!);
 	}
@@ -244,6 +268,21 @@ export function attachGameServer(wss: WebSocketServer) {
 				if (game.phase === 'playing' || game.phase === 'initial_peek') {
 					trackEvent('game_abandoned', game.analyticsData());
 				}
+			} else if (game.players.every((p) => p.isBot || !p.connected)) {
+				// only bots left at the table — freeze them and give the human a minute to return
+				bots.pause(game);
+				DOOMED.set(
+					game.uid,
+					setTimeout(() => {
+						DOOMED.delete(game.uid);
+						bots.dispose(game);
+						GAMES.delete(game.uid);
+						console.log('practice game removed:', game.uid);
+						if (game.phase === 'playing' || game.phase === 'initial_peek') {
+							trackEvent('game_abandoned', game.analyticsData());
+						}
+					}, 60_000)
+				);
 			} else {
 				broadcastState(game);
 			}

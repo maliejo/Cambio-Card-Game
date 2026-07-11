@@ -144,7 +144,7 @@
 	<ul class="mx-auto w-5/6 border-t py-4">
 		{#each v.players as player (player.id)}
 			<li class="py-1 font-semibold">
-				{player.name}
+				{player.isBot ? '🤖 ' : ''}{player.name}
 				{player.id === v.hostId ? '👑' : ''}
 				{player.id === v.selfId ? '(you)' : ''}
 			</li>

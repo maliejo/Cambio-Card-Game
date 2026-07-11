@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { client } from '$lib/client/game.svelte';
+	import type { BotDifficulty } from '$lib/shared/types';
 
 	let userName = $state('');
 	let roomCode = $state('');
+	let difficulty = $state<BotDifficulty>('medium');
 
 	function createGame() {
 		client.send({ method: 'create', name: userName });
@@ -10,6 +12,10 @@
 
 	function joinGame() {
 		client.send({ method: 'join', gameId: roomCode, name: userName });
+	}
+
+	function practiceGame() {
+		client.send({ method: 'practice', name: userName, difficulty });
 	}
 </script>
 
@@ -41,6 +47,24 @@
 		>
 			Join Game
 		</button>
+	</div>
+	<hr class="mx-auto w-5/6 border-t" />
+	<div class="p-4">
+		<div class="flex items-center gap-x-2">
+			<select bind:value={difficulty} class="h-10 rounded border p-2 text-sm" aria-label="bot difficulty">
+				<option value="easy">Easy</option>
+				<option value="medium">Medium</option>
+				<option value="hard">Hard</option>
+			</select>
+			<button
+				onclick={practiceGame}
+				disabled={!userName.trim() || !client.connected}
+				class="h-10 w-full rounded bg-primary p-2 text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+			>
+				Practice vs Bots
+			</button>
+		</div>
+		<p class="pt-1 text-xs text-gray-400">A solo game against three bots 🤖</p>
 	</div>
 	<label class="flex cursor-pointer items-center gap-2 p-4 pt-0 text-sm text-gray-600">
 		<input

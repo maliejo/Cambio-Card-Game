@@ -14,8 +14,12 @@ export default class Player {
 	/** Every card this player has seen face-up. Knowledge travels with the card when it moves. */
 	known = new Set<Card>();
 
-	constructor(id: string) {
+	/** Bots live only on the server — no websocket ever binds to their id. */
+	readonly isBot: boolean;
+
+	constructor(id: string, isBot = false) {
 		this.id = id;
+		this.isBot = isBot;
 	}
 
 	learn(card: Card) {
