@@ -54,7 +54,7 @@ export function trackPageview(
 
 export function trackEvent(
 	name: string,
-	data: Record<string, string | number> = {},
+	data: Record<string, string | number | boolean> = {},
 	visitor?: Visitor,
 	url = '/'
 ) {

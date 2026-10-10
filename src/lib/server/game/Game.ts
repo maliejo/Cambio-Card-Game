@@ -4,6 +4,7 @@ import Player from './Player';
 // relative import: this file is loaded by vite.config.ts where the $lib alias does not exist
 import {
 	DEFAULT_RULES,
+	MAX_PLAYERS,
 	RULE_OPTIONS,
 	type CardData,
 	type CardMove,
@@ -16,13 +17,39 @@ import {
 	type TurnState
 } from '../../shared/types';
 
-export const MAX_PLAYERS = 6;
 const HAND_SIZE = 4;
 const LOG_LIMIT = 30;
 /** After a discard, players get this long to flip a matching card. */
 const FLIP_WINDOW_MS = 6000;
 /** How long a peeked card stays revealed — the next draw waits until everyone finished looking. */
 const PEEK_MS = 4000;
+/** How long a flipped card stays face-up for everyone. */
+const FLIP_REVEAL_MS = 4000;
+/** After the final turn, everyone gets this long to flip a last duplicate before the round is scored. */
+const LAST_FLIPS_MS = 2000;
+/** A give that is still pending when the last flips end delays scoring — re-check this often. */
+const GIVE_WAIT_MS = 500;
+/** You may only call Cambio with at most this many points in your hand. */
+const CAMBIO_MAX_POINTS = 5;
+/** The bottom row of the starting hand — the two cards everyone memorizes. */
+const MEMORIZED_SLOTS = [2, 3];
+
+/** Analytics payload: Umami event data takes strings, numbers and booleans. */
+export type AnalyticsData = Record<string, string | number | boolean>;
+
+/** How a round came to an end. */
+type EndReason = 'cambio' | 'empty_hand' | 'no_players';
+
+/** What happened during a round — counted for analytics only. */
+const freshStats = () => ({
+	flipsCorrect: 0,
+	flipsWrong: 0,
+	flipsTooSlow: 0,
+	powersUsed: 0,
+	powersSkipped: 0,
+	discardDraws: 0,
+	reshuffles: 0
+});
 
 /** Rule violations and bad requests — the message is safe to show to the player. */
 export class GameError extends Error {}
@@ -64,24 +91,51 @@ export default class Game {
 	failedFlippers = new Set<string>();
 	winnerIds: string[] | null = null;
 	log: string[] = [];
+	/** Set once the final turn is over: nobody's turn anymore, only flipping until this timestamp. */
+	lastFlipsUntil: number | null = null;
+	private finishTimer: ReturnType<typeof setTimeout> | undefined;
 
 	/** Wired up by the transport layer to push transient card reveals to specific players. */
 	onReveal: RevealFn = () => {};
 	/** Wired up by the transport layer to show EVERYONE which slots someone looked at. */
 	onPeek: (refs: CardRef[], byId: string, durationMs: number) => void = () => {};
 	/** Wired up by the transport layer to report game stats to analytics. */
-	onAnalytics: (name: string, data: Record<string, number>) => void = () => {};
+	onAnalytics: (name: string, data: AnalyticsData) => void = () => {};
+	/** Wired up by the transport layer: the game changed on its own (a timer), not by a player action. */
+	onChange: () => void = () => {};
 
 	/** When the current round was dealt — for tracking game duration. */
 	startedAt = 0;
 	/** Completed turns this round — for tracking game length. */
 	turnCount = 0;
 
-	analyticsData(): Record<string, number> {
+	/** When the room was opened — for tracking how long a whole session lasts. */
+	readonly createdAt = Date.now();
+	/** Rounds dealt in this room so far. */
+	roundNumber = 0;
+	private stats = freshStats();
+	private endReason: EndReason = 'cambio';
+
+	/** The running (or last) round: who played, how long, and what happened in it. */
+	roundAnalytics(): AnalyticsData {
 		return {
+			round: this.roundNumber,
 			players: this.players.length,
+			bots: this.players.filter((p) => p.isBot).length,
 			turns: this.turnCount,
-			durationSeconds: Math.round((Date.now() - this.startedAt) / 1000)
+			durationSeconds: Math.round((Date.now() - this.startedAt) / 1000),
+			...this.stats
+		};
+	}
+
+	/** The room as a whole — sent once when it closes. */
+	roomAnalytics(): AnalyticsData {
+		return {
+			rounds: this.roundNumber,
+			roundsFinished: this.roundNumber - (this.phase === 'finished' || this.phase === 'waiting' ? 0 : 1),
+			players: this.players.length,
+			durationSeconds: Math.round((Date.now() - this.createdAt) / 1000),
+			endedMidRound: this.phase === 'playing' || this.phase === 'initial_peek'
 		};
 	}
 
@@ -122,7 +176,8 @@ export default class Game {
 	}
 
 	get currentPlayer(): Player | null {
-		return this.phase === 'playing' ? (this.players[this.currentPlayerIndex] ?? null) : null;
+		if (this.phase !== 'playing' || this.lastFlipsUntil !== null) return null;
+		return this.players[this.currentPlayerIndex] ?? null;
 	}
 
 	get discardTop(): Card | null {
@@ -134,16 +189,52 @@ export default class Game {
 		if (this.log.length > LOG_LIMIT) this.log.shift();
 	}
 
+	findPlayer(id: string): Player | null {
+		return this.players.find((p) => p.id === id) ?? null;
+	}
+
+	/** The card in a hand slot, or null for an empty or unknown slot. */
+	findCard(ref: CardRef): Card | null {
+		return this.findPlayer(ref.playerId)?.hand[ref.index] ?? null;
+	}
+
 	private playerById(id: string): Player {
-		const player = this.players.find((p) => p.id === id);
+		const player = this.findPlayer(id);
 		if (!player) throw new GameError('Unknown player');
 		return player;
 	}
 
 	private cardAt(ref: CardRef): Card {
-		const card = this.playerById(ref.playerId).hand[ref.index];
+		const card = this.findCard(ref);
 		if (!card) throw new GameError('There is no card in that spot');
 		return card;
+	}
+
+	/** Whether the player has seen their whole hand and it is cheap enough to call Cambio. */
+	canCallCambio(player: Player): boolean {
+		return player.knowsWholeHand && player.score <= CAMBIO_MAX_POINTS;
+	}
+
+	/** Whether the flip window after the last discard is still open. */
+	get flipWindowOpen(): boolean {
+		return this.flipUntil !== null && Date.now() <= this.flipUntil;
+	}
+
+	/**
+	 * Whether this player already lost the race for the current discard, per the flip rule:
+	 * first_multiple = the fastest player claims it and may keep flipping,
+	 * single = one flipped card total, everyone = no race at all.
+	 */
+	lostFlipRace(player: Player): boolean {
+		if (this.flipOwnerId === null) return false;
+		switch (this.rules.flipping) {
+			case 'everyone':
+				return false;
+			case 'single':
+				return true;
+			case 'first_multiple':
+				return this.flipOwnerId !== player.id;
+		}
 	}
 
 	// ---------- lobby ----------
@@ -197,6 +288,8 @@ export default class Game {
 		this.failedFlippers.clear();
 		this.burntCards.clear();
 		this.winnerIds = null;
+		this.lastFlipsUntil = null;
+		clearTimeout(this.finishTimer);
 
 		for (const player of this.players) {
 			player.hand = Array.from({ length: HAND_SIZE }, () => this.deck.drawCard());
@@ -204,27 +297,24 @@ export default class Game {
 			player.roundPoints = null;
 			player.known.clear();
 			// the two bottom cards are the ones they get to memorize
-			player.learn(player.hand[2]!);
-			player.learn(player.hand[3]!);
+			for (const index of MEMORIZED_SLOTS) player.learn(player.hand[index]!);
 		}
 		this.phase = 'initial_peek';
 		this.startedAt = Date.now();
 		this.turnCount = 0;
-		this.onAnalytics('game_started', { players: this.players.length });
+		this.roundNumber++;
+		this.stats = freshStats();
+		this.onAnalytics('round_started', {
+			round: this.roundNumber,
+			players: this.players.length,
+			bots: this.players.filter((p) => p.isBot).length,
+			// which house rules people actually play with
+			...Object.fromEntries(Object.entries(this.rules).map(([key, value]) => [`rule_${key}`, value]))
+		});
 		this.addLog('Cards dealt — memorize your two bottom cards!');
 
 		// everyone gets to memorize their two bottom cards until they press ready
-		for (const player of this.players) {
-			this.onReveal(
-				[player.id],
-				[2, 3].map((index) => ({
-					ref: { playerId: player.id, index },
-					card: player.hand[index]!.toData()
-				})),
-				'Memorize these two cards!',
-				0
-			);
-		}
+		for (const player of this.players) this.revealMemorizedCards(player);
 	}
 
 	setReady(player: Player) {
@@ -260,8 +350,8 @@ export default class Game {
 		// an unseen card might be anything — you must know your whole hand to call
 		if (!player.knowsWholeHand)
 			throw new GameError('You can only call Cambio when you have seen all of your cards');
-		if (player.score > 5)
-			throw new GameError('You can only call Cambio with 5 points or less in your hand');
+		if (!this.canCallCambio(player))
+			throw new GameError(`You can only call Cambio with ${CAMBIO_MAX_POINTS} points or less in your hand`);
 		this.cambioCallerId = player.id;
 		this.finalTurnsLeft = this.players.filter((p) => p !== player && p.connected).length;
 		this.turnCount++;
@@ -279,6 +369,7 @@ export default class Game {
 			const card = this.discards.pop();
 			if (!card) throw new GameError('The discard pile is empty');
 			this.drawnCard = card;
+			this.stats.discardDraws++;
 			this.flipOwnerId = null;
 			this.flipUntil = null; // the flippable card is gone
 			this.recordMove('discard', 'drawn', card); // taking from the discard is public
@@ -332,27 +423,19 @@ export default class Game {
 		}
 
 		switch (power) {
-			case 'peek_self': {
-				const [ref] = targets;
-				if (targets.length !== 1 || ref.playerId !== player.id)
-					throw new GameError('Pick one of your own cards to peek at');
-				player.learn(this.cardAt(ref));
-				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], 'Your card', PEEK_MS);
-				this.onPeek([ref], player.id, PEEK_MS);
-				this.peekUntil = Date.now() + PEEK_MS;
-				this.addLog(`👁️ ${player.name} peeked at one of their own cards`);
-				this.endTurn();
-				break;
-			}
+			case 'peek_self':
 			case 'peek_other': {
 				const [ref] = targets;
-				if (targets.length !== 1 || ref.playerId === player.id)
-					throw new GameError("Pick someone else's card to peek at");
-				player.learn(this.cardAt(ref)); // if it ever swaps into their hand, they know it
-				this.onReveal([player.id], [{ ref, card: this.cardAt(ref).toData() }], `${this.playerById(ref.playerId).name}'s card`, PEEK_MS);
+				const own = power === 'peek_self';
+				if (targets.length !== 1 || (ref.playerId === player.id) !== own)
+					throw new GameError(own ? 'Pick one of your own cards to peek at' : "Pick someone else's card to peek at");
+				const owner = this.playerById(ref.playerId);
+				const card = this.cardAt(ref);
+				player.learn(card); // if it ever swaps into their hand, they know it
+				this.onReveal([player.id], [{ ref, card: card.toData() }], own ? 'Your card' : `${owner.name}'s card`, PEEK_MS);
 				this.onPeek([ref], player.id, PEEK_MS);
 				this.peekUntil = Date.now() + PEEK_MS;
-				this.addLog(`👁️ ${player.name} peeked at one of ${this.playerById(ref.playerId).name}'s cards`);
+				this.addLog(`👁️ ${player.name} peeked at one of ${own ? 'their own cards' : `${owner.name}'s cards`}`);
 				this.endTurn();
 				break;
 			}
@@ -390,10 +473,12 @@ export default class Game {
 				break;
 			}
 		}
+		this.stats.powersUsed++; // only reached when the targets were valid
 	}
 
 	skipPower(player: Player) {
 		this.assertTurn(player, 'power');
+		this.stats.powersSkipped++;
 		this.addLog(`${player.name} skipped the card power`);
 		this.endTurn();
 	}
@@ -432,7 +517,7 @@ export default class Game {
 			throw new GameError('You cannot touch the cards of whoever called Cambio');
 		const top = this.discardTop;
 		if (!top) throw new GameError('There is nothing on the discard pile yet');
-		if (!this.flipUntil || Date.now() > this.flipUntil)
+		if (!this.flipWindowOpen)
 			throw new GameError('Too late — you can only flip right after a card was discarded');
 		if (!this.rules.retryFlip && this.failedFlippers.has(player.id))
 			throw new GameError('You already flipped wrong — no more tries until the next discard');
@@ -445,20 +530,12 @@ export default class Game {
 			this.players.map((p) => p.id),
 			[{ ref, card: card.toData() }],
 			`${player.name} flipped this card`,
-			4000
+			FLIP_REVEAL_MS
 		);
 
-		// whether this discard is still up for grabs depends on the flip rule:
-		// first_multiple = the fastest player claims it and may keep flipping,
-		// single = one flipped card total, everyone = no race at all
-		const claimed = this.flipOwnerId !== null;
-		const tooSlow =
-			this.rules.flipping === 'everyone'
-				? false
-				: this.rules.flipping === 'single'
-					? claimed
-					: claimed && this.flipOwnerId !== player.id;
+		const tooSlow = this.lostFlipRace(player);
 		if (card.rank === top.rank && !tooSlow) {
+			this.stats.flipsCorrect++;
 			owner.hand[ref.index] = null;
 			this.pushDiscard(card, true);
 			this.burntCards.add(card); // a flipped duplicate is burnt: nobody may pick it up
@@ -475,6 +552,8 @@ export default class Game {
 			}
 		} else {
 			const reason = tooSlow ? 'was too slow' : 'flipped wrong';
+			if (tooSlow) this.stats.flipsTooSlow++;
+			else this.stats.flipsWrong++;
 			this.failedFlippers.add(player.id);
 			const slot = player.receiveCard(this.drawFromDeck());
 			this.recordMove('deck', { playerId: player.id, index: slot });
@@ -502,6 +581,7 @@ export default class Game {
 		const emptied = this.players.find((p) => p.cardsLeft === 0 && !this.pendingGive);
 		if (emptied) {
 			this.addLog(`${emptied.name} has no cards left!`);
+			this.endReason = 'empty_hand';
 			this.finish();
 		}
 	}
@@ -514,6 +594,8 @@ export default class Game {
 		for (const p of this.players) p.learn(card);
 		this.flipOwnerId = null;
 		this.flipUntil = Date.now() + FLIP_WINDOW_MS;
+		// once the last flips run, the race ends with them
+		if (this.lastFlipsUntil !== null) this.flipUntil = Math.min(this.flipUntil, this.lastFlipsUntil);
 		// a flipped duplicate merely extends the running race — a fresh
 		// discard starts a new one, where earlier wrong flips are forgiven
 		if (!fromFlip) this.failedFlippers.clear();
@@ -540,8 +622,10 @@ export default class Game {
 		for (const card of recycled.cards) {
 			this.burntCards.delete(card);
 			for (const p of this.players) p.known.delete(card);
+			this.recordMove('discard', 'deck', card); // the pile visibly goes back onto the deck
 		}
 		this.deck.cards.push(...recycled.cards);
+		this.stats.reshuffles++;
 		this.addLog('Discard pile shuffled back into the deck');
 	}
 
@@ -557,7 +641,7 @@ export default class Game {
 
 		if (this.cambioCallerId) {
 			this.finalTurnsLeft--;
-			if (this.finalTurnsLeft <= 0) return this.finish();
+			if (this.finalTurnsLeft <= 0) return this.startLastFlips('cambio');
 		}
 		this.advanceTurn();
 	}
@@ -571,26 +655,54 @@ export default class Game {
 				return;
 			}
 		}
-		this.finish(); // nobody left who can take a turn
+		this.startLastFlips('no_players'); // nobody left who can take a turn
+	}
+
+	/**
+	 * The final turn is over, but the round isn't scored yet: everyone gets a
+	 * short moment to flip a matching card onto that last discard.
+	 */
+	private startLastFlips(reason: EndReason) {
+		this.endReason = reason;
+		this.turnState = null;
+		this.lastFlipsUntil = Date.now() + LAST_FLIPS_MS;
+		this.flipUntil = this.flipWindowOpen ? this.lastFlipsUntil : null;
+		this.addLog('Last chance to flip!');
+		this.scheduleFinish(LAST_FLIPS_MS);
+	}
+
+	private scheduleFinish(delayMs: number) {
+		clearTimeout(this.finishTimer);
+		this.finishTimer = setTimeout(() => {
+			if (this.phase !== 'playing') return; // a flip already emptied a hand and ended the round
+			// a correct flip owes someone a card — score only once it was handed over
+			if (this.pendingGive) return this.scheduleFinish(GIVE_WAIT_MS);
+			this.finish();
+			this.onChange();
+		}, delayMs);
 	}
 
 	private finish() {
+		clearTimeout(this.finishTimer);
 		this.phase = 'finished';
 		this.turnState = null;
 		this.pendingGive = null;
+		this.lastFlipsUntil = null;
+		this.flipUntil = null;
 
 		const scores = this.players.map((p) => p.score);
 		const minScore = Math.min(...scores);
 		let winners = this.players.filter((p) => p.score === minScore);
 		// the caller loses ties: "If someone else ties you or has fewer points, they win!"
-		if (winners.length > 1 && this.cambioCallerId)
-			winners = winners.filter((p) => p.id !== this.cambioCallerId) || winners;
+		// (with 2+ tied winners, at least one of them is not the caller)
+		if (winners.length > 1) winners = winners.filter((p) => p.id !== this.cambioCallerId);
 
 		this.winnerIds = winners.map((p) => p.id);
 		winners.forEach((p) => p.gamesWon++);
 
 		// points board: everyone banks their hand value, the caller gambles on top —
 		// a bonus for having strictly the least points, a penalty when someone else has less
+		let cambioOutcome = 'not_called';
 		for (const p of this.players) {
 			let bonus = 0;
 			if (p.id === this.cambioCallerId) {
@@ -598,12 +710,20 @@ export default class Game {
 				bonus = p.score < bestOther ? -this.rules.cambioStake : bestOther < p.score ? this.rules.cambioStake : 0;
 				if (bonus < 0) this.addLog(`🔔 ${p.name} pulled the Cambio off: ${bonus} bonus points`);
 				if (bonus > 0) this.addLog(`🔔 ${p.name} called Cambio but someone had less: +${bonus} penalty points`);
+				cambioOutcome = bonus < 0 ? 'won' : bonus > 0 ? 'lost' : 'tied';
 			}
 			p.roundPoints = p.score + bonus;
 			p.totalPoints += p.roundPoints;
 		}
 
-		this.onAnalytics('game_finished', this.analyticsData());
+		this.onAnalytics('round_finished', {
+			...this.roundAnalytics(),
+			endedBy: this.endReason,
+			cambioOutcome,
+			winningScore: minScore,
+			// against bots: how often does the human come out on top? (tunes the difficulties)
+			humanWon: winners.some((p) => !p.isBot)
+		});
 		this.addLog(`🏆 ${winners.map((p) => p.name).join(' & ')} won with ${minScore} points!`);
 	}
 
@@ -615,13 +735,14 @@ export default class Game {
 
 	// ---------- connection handling ----------
 
-	handleDisconnect(player: Player) {
+	/** A player dropped out — `left` when they deliberately left for the main menu. */
+	handleDisconnect(player: Player, left = false) {
 		player.connected = false;
 		if (this.phase === 'waiting') {
 			this.removePlayer(player);
 			return;
 		}
-		this.addLog(`${player.name} disconnected`);
+		this.addLog(`${player.name} ${left ? 'left the game' : 'disconnected'}`);
 
 		if (this.pendingGive?.fromId === player.id) {
 			const index = player.hand.findIndex(Boolean);
@@ -645,20 +766,28 @@ export default class Game {
 		player.connected = true;
 		this.addLog(`${player.name} reconnected`);
 		// they may have missed their memorize window — show the cards again
-		if (this.phase === 'initial_peek') {
-			this.onReveal(
-				[player.id],
-				[2, 3].map((index) => ({
-					ref: { playerId: player.id, index },
-					card: player.hand[index]!.toData()
-				})),
-				'Memorize these two cards!',
-				0
-			);
-		}
+		if (this.phase === 'initial_peek') this.revealMemorizedCards(player);
+	}
+
+	/** Show a player their two bottom cards until the memorize phase ends. */
+	private revealMemorizedCards(player: Player) {
+		this.onReveal(
+			[player.id],
+			MEMORIZED_SLOTS.map((index) => ({
+				ref: { playerId: player.id, index },
+				card: player.hand[index]!.toData()
+			})),
+			'Memorize these two cards!',
+			0
+		);
 	}
 
 	// ---------- per-player serialization ----------
+
+	/** Time left until a deadline — only meaningful while a round is played. */
+	private remainingMs(until: number | null): number {
+		return this.phase === 'playing' && until ? Math.max(0, until - Date.now()) : 0;
+	}
 
 	viewFor(player: Player): GameView {
 		const revealed = this.phase === 'finished';
@@ -692,15 +821,10 @@ export default class Game {
 			kingRefs: this.kingRefs,
 			rules: this.rules,
 			cambioCallerId: this.cambioCallerId,
-			cambioAllowed: player.knowsWholeHand && player.score <= 5,
-			flipRemainingMs:
-				this.phase === 'playing' && this.flipUntil
-					? Math.max(0, this.flipUntil - Date.now())
-					: 0,
-			peekRemainingMs:
-				this.phase === 'playing' && this.peekUntil
-					? Math.max(0, this.peekUntil - Date.now())
-					: 0,
+			lastFlips: this.lastFlipsUntil !== null,
+			cambioAllowed: this.canCallCambio(player),
+			flipRemainingMs: this.remainingMs(this.flipUntil),
+			peekRemainingMs: this.remainingMs(this.peekUntil),
 			pendingGive: this.pendingGive
 				? { fromId: this.pendingGive.fromId, toId: this.pendingGive.toId }
 				: null,

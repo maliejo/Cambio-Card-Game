@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { WebSocket, WebSocketServer } from 'ws';
-import Game, { GameError, MAX_PLAYERS } from './game/Game';
+import Game, { GameError, type AnalyticsData } from './game/Game';
 import Player from './game/Player';
 import { BotManager, PROFILES } from './bots';
 import { trackEvent, type Visitor } from './analytics';
@@ -19,6 +19,13 @@ const CLIENTS = new Map<string, Client>();
 const bots = new BotManager((game) => broadcastState(game));
 /** Practice games whose human left — deleted after a grace period unless they resume. */
 const DOOMED = new Map<string, ReturnType<typeof setTimeout>>();
+const PRACTICE_GRACE_MS = 60_000;
+/** What kind of room a game is — tagged onto every analytics event it sends. */
+const ROOM_KINDS = new WeakMap<Game, AnalyticsData>();
+
+function trackGame(game: Game, name: string, data: AnalyticsData = {}) {
+	trackEvent(name, { ...(ROOM_KINDS.get(game) ?? { mode: 'friends' }), ...data });
+}
 
 function send(ws: WebSocket, data: ServerMessage) {
 	try {
@@ -28,18 +35,73 @@ function send(ws: WebSocket, data: ServerMessage) {
 	}
 }
 
+/** Send to a player's socket — bots and disconnected players have none. */
+function sendTo(playerId: string, data: ServerMessage) {
+	const client = CLIENTS.get(playerId);
+	if (client?.player.connected) send(client.ws, data);
+}
+
 /** Push the current game state to every player in the game, each with their own redacted view. */
 function broadcastState(game: Game) {
 	const moves = game.takeMoves();
 	for (const player of game.players) {
-		const client = CLIENTS.get(player.id);
-		if (!client?.player.connected) continue;
 		// moves go first: the client measures the moving cards' start positions
 		// in the old layout before the new state re-renders the table
-		if (moves.length) send(client.ws, { method: 'moves', moves });
-		send(client.ws, { method: 'state', state: game.viewFor(player) });
+		if (moves.length) sendTo(player.id, { method: 'moves', moves });
+		sendTo(player.id, { method: 'state', state: game.viewFor(player) });
 	}
 	bots.onState(game); // every state change lets the bots (re)plan their next move
+}
+
+/**
+ * A player is gone from their game: for now (the socket closed — they may resume)
+ * or for good (they left for the main menu).
+ */
+function departGame(game: Game, player: Player, left: boolean) {
+	game.handleDisconnect(player, left);
+	const onlyBots = game.players.every((p) => p.isBot || !p.connected);
+	if (game.players.every((p) => !p.connected) || (left && onlyBots)) {
+		removeGame(game);
+	} else if (onlyBots) {
+		// only bots left at the table — freeze them and give the human a minute to return
+		bots.pause(game);
+		DOOMED.set(
+			game.uid,
+			setTimeout(() => {
+				DOOMED.delete(game.uid);
+				removeGame(game);
+			}, PRACTICE_GRACE_MS)
+		);
+	} else {
+		broadcastState(game);
+	}
+}
+
+/** Back to the main menu: the connection gets a fresh identity, the old seat is abandoned. */
+function leave(client: Client) {
+	const { game, player } = client;
+	if (!game) return;
+	CLIENTS.delete(player.id);
+	client.game = null;
+	client.player = new Player(crypto.randomUUID());
+	CLIENTS.set(client.player.id, client);
+	trackGame(game, 'player_left', { phase: game.phase, round: game.roundNumber });
+	departGame(game, player, true);
+	send(client.ws, { method: 'connected', clientId: client.player.id });
+}
+
+/** Forget a game for good — a running round nobody finished counts as abandoned. */
+function removeGame(game: Game) {
+	clearTimeout(DOOMED.get(game.uid));
+	DOOMED.delete(game.uid);
+	bots.dispose(game);
+	GAMES.delete(game.uid);
+	console.log('game removed:', game.uid);
+	trackGame(game, 'room_closed', game.roomAnalytics());
+	// a running round everyone walked away from
+	if (game.phase === 'playing' || game.phase === 'initial_peek') {
+		trackGame(game, 'round_abandoned', game.roundAnalytics());
+	}
 }
 
 function trackPerf(client: Client, metrics: Record<string, number>) {
@@ -57,21 +119,13 @@ function wireReveals(game: Game) {
 		// deferred so reveals arrive after the state broadcast that follows the action —
 		// the client resets its reveals whenever the game moves to a new phase/turn
 		queueMicrotask(() => {
-			for (const id of toPlayerIds) {
-				const client = CLIENTS.get(id);
-				if (client?.player.connected)
-					send(client.ws, { method: 'reveal', cards, reason, durationMs });
-			}
+			for (const id of toPlayerIds) sendTo(id, { method: 'reveal', cards, reason, durationMs });
 		});
 	};
 	// which slots were looked at is public information — everyone gets the marker
 	game.onPeek = (refs, byId, durationMs) => {
 		queueMicrotask(() => {
-			for (const player of game.players) {
-				const client = CLIENTS.get(player.id);
-				if (client?.player.connected)
-					send(client.ws, { method: 'peeked', refs, byId, durationMs });
-			}
+			for (const player of game.players) sendTo(player.id, { method: 'peeked', refs, byId, durationMs });
 		});
 	};
 }
@@ -81,7 +135,8 @@ function createGame(client: Client, name: string) {
 	while (GAMES.has(uid)) uid = Game.generateUID();
 	const game = new Game(uid);
 	wireReveals(game);
-	game.onAnalytics = (name, data) => trackEvent(name, data);
+	game.onAnalytics = (name, data) => trackGame(game, name, data);
+	game.onChange = () => broadcastState(game);
 	GAMES.set(uid, game);
 	console.log('new game created:', uid);
 	joinGame(client, uid, name);
@@ -105,9 +160,10 @@ function createPracticeGame(client: Client, name: string, difficulty: BotDifficu
 	if (client.game) throw new GameError('You are already in a game');
 	createGame(client, name);
 	const game = client.game!;
+	ROOM_KINDS.set(game, { mode: 'practice', difficulty });
 	bots.addBots(game, difficulty, 3);
-	game.start(client.player);
 	trackEvent('practice_started', { difficulty }, client.visitor);
+	game.start(client.player);
 }
 
 /**
@@ -157,13 +213,20 @@ function handleMessage(client: Client, message: ClientMessage) {
 	const { player, game } = client;
 
 	if (message.method === 'perf') return trackPerf(client, message.metrics ?? {});
+	if (message.method === 'leave') return leave(client);
 	if (message.method === 'resume')
 		return resume(client, message.token, message.takeover === true);
 	if (message.method === 'create' || message.method === 'join' || message.method === 'practice') {
-		if (message.method === 'create') createGame(client, message.name);
+		if (message.method === 'create') {
+			createGame(client, message.name);
+			trackEvent('room_created', {}, client.visitor);
+		}
 		else if (message.method === 'practice')
 			createPracticeGame(client, message.name, message.difficulty);
-		else joinGame(client, message.gameId, message.name);
+		else {
+			joinGame(client, message.gameId, message.name);
+			trackEvent('room_joined', { players: client.game!.players.length }, client.visitor);
+		}
 		return broadcastState(client.game!);
 	}
 
@@ -258,34 +321,7 @@ export function attachGameServer(wss: WebSocketServer) {
 			// close is stale and must not mark the player as disconnected
 			if (CLIENTS.get(client.player.id) !== client) return;
 			CLIENTS.delete(client.player.id);
-			const game = client.game;
-			if (!game) return;
-			game.handleDisconnect(client.player);
-			if (game.players.every((p) => !p.connected)) {
-				GAMES.delete(game.uid);
-				console.log('game removed:', game.uid);
-				// a running round everyone walked away from counts as abandoned
-				if (game.phase === 'playing' || game.phase === 'initial_peek') {
-					trackEvent('game_abandoned', game.analyticsData());
-				}
-			} else if (game.players.every((p) => p.isBot || !p.connected)) {
-				// only bots left at the table — freeze them and give the human a minute to return
-				bots.pause(game);
-				DOOMED.set(
-					game.uid,
-					setTimeout(() => {
-						DOOMED.delete(game.uid);
-						bots.dispose(game);
-						GAMES.delete(game.uid);
-						console.log('practice game removed:', game.uid);
-						if (game.phase === 'playing' || game.phase === 'initial_peek') {
-							trackEvent('game_abandoned', game.analyticsData());
-						}
-					}, 60_000)
-				);
-			} else {
-				broadcastState(game);
-			}
+			if (client.game) departGame(client.game, client.player, false);
 		});
 	});
 }

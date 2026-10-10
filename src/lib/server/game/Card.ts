@@ -1,5 +1,24 @@
 // relative import: this file is loaded by vite.config.ts where the $lib alias does not exist
-import { DEFAULT_RULES, type CardData, type Power, type Rank, type Rules, type Suit } from '../../shared/types';
+import {
+	DEFAULT_RULES,
+	SUIT_SYMBOLS,
+	isRed,
+	type CardData,
+	type Power,
+	type Rank,
+	type Rules,
+	type Suit
+} from '../../shared/types';
+
+const FIXED_VALUES: Partial<Record<Rank, number>> = { A: 1, T: 10, J: 11, Q: 12, F: 0 };
+const RANK_NAMES: Partial<Record<Rank, string>> = {
+	A: 'Ace',
+	T: '10',
+	J: 'Jack',
+	Q: 'Queen',
+	K: 'King',
+	F: 'Joker'
+};
 
 export default class Card implements CardData {
 	suit: Suit;
@@ -17,30 +36,15 @@ export default class Card implements CardData {
 	}
 
 	get isRed(): boolean {
-		return this.suit === 'H' || this.suit === 'D';
+		return isRed(this.suit);
 	}
 
 	getValue(rules: Rules): number {
-		const numericalValue = parseInt(this.rank);
-		if (Number.isInteger(numericalValue)) return numericalValue;
-
-		switch (this.rank) {
-			case 'T':
-				return 10;
-			case 'J':
-				return 11;
-			case 'Q':
-				return 12;
-			case 'K':
-				// red kings are the best cards in the game, black kings the worst
-				return this.isRed ? rules.redKingValue : rules.blackKingValue;
-			case 'A':
-				return 1;
-			case 'F':
-				return 0;
-			default:
-				throw new Error('Invalid card rank');
-		}
+		// red kings are the best cards in the game, black kings the worst
+		if (this.rank === 'K') return this.isRed ? rules.redKingValue : rules.blackKingValue;
+		const value = FIXED_VALUES[this.rank] ?? parseInt(this.rank);
+		if (!Number.isInteger(value)) throw new Error('Invalid card rank');
+		return value;
 	}
 
 	getPower(rules: Rules): Power | null {
@@ -64,10 +68,8 @@ export default class Card implements CardData {
 	}
 
 	get displayName(): string {
-		const ranks: Partial<Record<Rank, string>> = { T: '10', J: 'Jack', Q: 'Queen', K: 'King', A: 'Ace', F: 'Joker' };
-		const suits: Record<Suit, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
-		const rank = ranks[this.rank] ?? this.rank;
-		return this.rank === 'F' ? rank : rank + suits[this.suit];
+		const rank = RANK_NAMES[this.rank] ?? this.rank;
+		return this.rank === 'F' ? rank : rank + SUIT_SYMBOLS[this.suit];
 	}
 
 	toData(): CardData {

@@ -1,7 +1,19 @@
-export type Suit = 'S' | 'D' | 'H' | 'C';
-export type Rank =
-	| 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K'
-	| 'F'; // F stands for Joker. F as in Funny
+export const MAX_PLAYERS = 6;
+
+export const SUITS = ['C', 'D', 'H', 'S'] as const;
+export type Suit = (typeof SUITS)[number];
+/** The 13 regular ranks — jokers ('F') are added to the deck separately. */
+export const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K'] as const;
+export type Rank = (typeof RANKS)[number] | 'F'; // F stands for Joker. F as in Funny
+
+export const SUIT_NAMES: Record<Suit, string> = { C: 'clubs', D: 'diamonds', H: 'hearts', S: 'spades' };
+export const SUIT_SYMBOLS: Record<Suit, string> = { C: '♣', D: '♦', H: '♥', S: '♠' };
+
+export const isRed = (suit: Suit) => suit === 'H' || suit === 'D';
+
+/** How a rank is printed in a card corner: 10 instead of T, a star for the joker. */
+export const rankLabel = (rank: Rank) => (rank === 'T' ? '10' : rank === 'F' ? '★' : rank);
+
 export type Power = 'peek_self' | 'peek_other' | 'blind_swap' | 'peek_swap';
 
 /** House rules, adjustable by the host in the lobby. */
@@ -38,7 +50,7 @@ export const RULE_OPTIONS = {
 	powers: ['queen', 'king'],
 	peeking: ['two_players', 'same_player'],
 	flipping: ['first_multiple', 'single', 'everyone'],
-	retryFlip: [true, false],
+	retryFlip: [false, true],
 	callerLocked: [true, false],
 	cambioStake: [5, 10]
 } as const satisfies { [K in keyof Rules]: readonly Rules[K][] };
@@ -106,6 +118,8 @@ export interface GameView {
 	/** The house rules this game runs under. */
 	rules: Rules;
 	cambioCallerId: string | null;
+	/** The final turn is over — only a few seconds of flipping remain before the round is scored. */
+	lastFlips: boolean;
 	/** Whether YOU may call Cambio: you have seen every card in your hand AND it is worth ≤5 points. */
 	cambioAllowed: boolean;
 	/** How long flipping is still allowed (ms) — flips are only open briefly after a discard. */
@@ -151,6 +165,8 @@ export type ClientMessage =
 	| { method: 'flip'; playerId: string; index: number }
 	| { method: 'give'; index: number }
 	| { method: 'playAgain' }
+	/** Leave the current room and go back to the main menu. */
+	| { method: 'leave' }
 	/** Browser performance numbers, relayed server-side to analytics. */
 	| { method: 'perf'; metrics: Record<string, number> };
 

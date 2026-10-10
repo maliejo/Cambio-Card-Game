@@ -1,5 +1,6 @@
 import Game, { GameError } from './game/Game';
 import Player from './game/Player';
+import { shuffle } from './game/Deck';
 import type Card from './game/Card';
 import type { BotDifficulty, CardRef } from '../shared/types';
 
@@ -181,7 +182,7 @@ export class BotManager {
 	constructor(private broadcast: (game: Game) => void) {}
 
 	addBots(game: Game, difficulty: BotDifficulty, count: number) {
-		const names = [...BOT_NAMES].sort(() => Math.random() - 0.5).slice(0, count);
+		const names = shuffle([...BOT_NAMES]).slice(0, count);
 		const seats = names.map((name) => {
 			const player = new Player(`bot-${crypto.randomUUID()}`, true);
 			player.name = name;
@@ -199,10 +200,6 @@ export class BotManager {
 			};
 		});
 		this.seats.set(game, seats);
-	}
-
-	has(game: Game): boolean {
-		return this.seats.has(game);
 	}
 
 	/** Freeze all pending bot actions (the human left) — the next onState resumes them. */
@@ -263,8 +260,7 @@ export class BotManager {
 
 	/** Watch peek & swap decisions: whoever declines a swap kept something better. */
 	private observe(game: Game, seats: BotSeat[]) {
-		const cardAt = (ref: CardRef) =>
-			game.players.find((p) => p.id === ref.playerId)?.hand[ref.index] ?? null;
+		const cardAt = (ref: CardRef) => game.findCard(ref);
 
 		if (game.phase === 'playing' && game.turnState === 'king_decide' && game.currentPlayer) {
 			this.kingObs.set(game, {
@@ -376,7 +372,7 @@ export class BotManager {
 			key: `turn:${game.turnCount}:draw`,
 			delayMs: peekMs + between(profile.think),
 			act: () => {
-				if (!game.cambioCallerId && bot.knowsWholeHand && bot.score <= profile.cambioAt)
+				if (!game.cambioCallerId && game.canCallCambio(bot) && bot.score <= profile.cambioAt)
 					return game.callCambio(bot);
 				const top = game.discardTop;
 				const worst = worstSlot(seat);
@@ -461,7 +457,7 @@ export class BotManager {
 						let ref = target.ref;
 						if (target.known && Math.random() < profile.mixup) {
 							// "wait, was it left or right?" — grabs a neighboring slot instead
-							const owner = game.players.find((p) => p.id === ref.playerId)!;
+							const owner = game.findPlayer(ref.playerId)!;
 							const others = slotsOf(seat, owner).filter((s) => s.index !== ref.index);
 							if (others.length) ref = { playerId: owner.id, index: pick(others).index };
 						}
@@ -520,11 +516,9 @@ export class BotManager {
 			key: `turn:${game.turnCount}:decide`,
 			delayMs: between(seat.profile.think),
 			act: () => {
-				const cardOf = (ref: CardRef) =>
-					game.players.find((p) => p.id === ref.playerId)?.hand[ref.index];
 				const [a, b] = game.kingRefs;
-				const cardA = a && cardOf(a);
-				const cardB = b && cardOf(b);
+				const cardA = a && game.findCard(a);
+				const cardB = b && game.findCard(b);
 				let swap = false;
 				if (cardA && cardB && (a.playerId === bot.id) !== (b.playerId === bot.id)) {
 					// exactly one card is the bot's own — always take the lower one
@@ -543,13 +537,9 @@ export class BotManager {
 		const bot = seat.player;
 		const profile = seat.profile;
 		const top = game.discardTop;
-		if (!top || !game.flipUntil || Date.now() >= game.flipUntil) return null;
+		if (!top || !game.flipWindowOpen || game.lostFlipRace(bot)) return null;
 		if (bot.id === game.cambioCallerId) return null;
 		if (!game.rules.retryFlip && game.failedFlippers.has(bot.id)) return null;
-		const claimed = game.flipOwnerId !== null;
-		if (game.rules.flipping === 'single' && claimed) return null;
-		if (game.rules.flipping === 'first_multiple' && claimed && game.flipOwnerId !== bot.id)
-			return null;
 		if (!this.bestFlip(game, seat)) return null;
 
 		const key = `flip:${game.discards.length}:${top.shortName}`;
@@ -572,7 +562,7 @@ export class BotManager {
 				if (!target) return;
 				if (accurate) return game.flip(bot, target);
 				// grabbed a neighboring slot in the rush — a very human mistake
-				const owner = game.players.find((p) => p.id === target.playerId)!;
+				const owner = game.findPlayer(target.playerId)!;
 				const others = slotsOf(seat, owner).filter((s) => s.index !== target.index);
 				game.flip(bot, others.length ? { playerId: owner.id, index: pick(others).index } : target);
 			}
