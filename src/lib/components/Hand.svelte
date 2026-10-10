@@ -3,7 +3,8 @@
 	import { client } from '$lib/client/game.svelte';
 	import { actionFor, handleCardClick } from '$lib/client/actions';
 	import { cardLocation } from '$lib/client/locations';
-	import { handCardWidth, handCardHeight, type Orientation } from '$lib/client/ui';
+	import { leanToward } from '$lib/client/lean';
+	import { CARD_RATIO, handCardWidth, handCardHeight, type Orientation } from '$lib/client/ui';
 	import type { PlayerView } from '$lib/shared/types';
 
 	interface Props {
@@ -49,13 +50,17 @@
 	});
 
 	const sideways = $derived(orientation === 90 || orientation === -90);
+	// a portrait card turned a quarter into a landscape slot box: its width is the box's height
+	const sidewaysWidth = `${CARD_RATIO * 100}%`;
 </script>
 
 {#snippet card(index: number)}
 	<PlayingCard
 		card={client.revealFor(player.id, index) ?? player.hand[index]}
 		clickable={actionFor(player.id, index) !== null}
-		hinted={actionFor(player.id, index) === 'replace'}
+		hinted={client.showHints && actionFor(player.id, index) === 'replace'}
+		sway={large ? index : null}
+		peeked={client.peekerOf(player.id, index) !== null}
 		selected={client.picks.some((p) => p.playerId === player.id && p.index === index)}
 		highlighted={client.revealFor(player.id, index) !== null &&
 			client.view?.phase !== 'initial_peek'}
@@ -68,10 +73,13 @@
 	<!-- who looked at a card is public — everyone sees the eye on that exact slot -->
 	{#if peeker && player.hand[index]}
 		<span
-			class="pointer-events-none absolute -top-1.5 -right-1.5 z-10 rounded-full bg-dark px-1 text-[10px] leading-4 shadow-md"
+			class="pointer-events-none absolute -top-2 -right-2 z-10 grid h-5 w-5 place-items-center rounded-md border border-gold/40 bg-panel text-gold shadow-md"
 			title="{peeker} looked at this card"
 		>
-			👁️
+			<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+				<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+				<circle cx="12" cy="12" r="3" fill="currentColor" />
+			</svg>
 		</span>
 	{/if}
 {/snippet}
@@ -82,10 +90,12 @@
 		<div
 			class="relative aspect-[7/5] shrink-0 {handCardHeight()}"
 			style:visibility={client.isFlightTarget(`${player.id}:${index}`) ? 'hidden' : 'visible'}
+			data-angle={orientation}
 			use:cardLocation={`${player.id}:${index}`}
+			use:leanToward={{ peekerId: client.peekerOf(player.id, index), ownerId: player.id, orientation }}
 		>
 			<div class="absolute inset-0 grid place-items-center">
-				<div class={orientation === 90 ? 'rotate-90' : '-rotate-90'} style:width="71.43%">
+				<div class={orientation === 90 ? 'rotate-90' : '-rotate-90'} style:width={sidewaysWidth}>
 					{@render card(index)}
 				</div>
 			</div>
@@ -96,6 +106,7 @@
 			class="relative shrink-0 {handCardWidth(large)}"
 			style:visibility={client.isFlightTarget(`${player.id}:${index}`) ? 'hidden' : 'visible'}
 			use:cardLocation={`${player.id}:${index}`}
+			use:leanToward={{ peekerId: client.peekerOf(player.id, index), ownerId: player.id, orientation }}
 		>
 			{@render card(index)}
 			{@render peekBadge(index)}

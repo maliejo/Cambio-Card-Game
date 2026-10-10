@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { client } from '$lib/client/game.svelte';
-	import type { Rules } from '$lib/shared/types';
+	import { MAX_PLAYERS, type Rules } from '$lib/shared/types';
+	import LeaveButton from './LeaveButton.svelte';
 
 	const v = $derived(client.view!);
 	const isHost = $derived(v.hostId === v.selfId);
@@ -13,6 +14,26 @@
 		await navigator.clipboard.writeText(v.gameId);
 		copied = true;
 		setTimeout(() => (copied = false), 1500);
+	}
+
+	let linkCopied = $state(false);
+	/** An invite link carries my name, so its preview reads "<me> dealt you in". */
+	async function shareInvite() {
+		const self = v.players.find((p) => p.id === v.selfId);
+		const url = new URL(`/join/${v.gameId}`, location.origin);
+		if (self) url.searchParams.set('from', self.name);
+		// phones get the native share sheet (WhatsApp & co), desktops a copied link
+		if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+			try {
+				await navigator.share({ title: 'Cambio', url: url.href });
+				return;
+			} catch {
+				// dismissed — fall through to copying
+			}
+		}
+		await navigator.clipboard.writeText(url.href);
+		linkCopied = true;
+		setTimeout(() => (linkCopied = false), 2000);
 	}
 
 	interface RuleUI {
@@ -91,10 +112,10 @@
 				{
 					key: 'retryFlip',
 					label: 'After a wrong flip',
-					info: 'A wrong flip always costs you a penalty card. By default you may keep trying anyway. The alternative locks you out after one wrong flip until the next card is discarded.',
+					info: 'A wrong flip always costs you a penalty card. By default it also locks you out until the next card is discarded, so nobody can grab cards at random. The alternative lets you keep trying, a penalty card each time.',
 					options: [
-						{ value: true, label: 'You may try again' },
-						{ value: false, label: 'One wrong try locks you out' }
+						{ value: false, label: 'One wrong try locks you out' },
+						{ value: true, label: 'You may try again' }
 					]
 				},
 				{
@@ -123,86 +144,98 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && closeRules()} />
 
-<div class="relative w-80 rounded border bg-white text-center shadow-xl">
-	<button
-		class="absolute top-2 right-2 rounded-full p-1.5 text-lg leading-none transition-colors hover:bg-gray-100"
-		onclick={() => (showRules = true)}
-		title="game rules"
-		aria-label="game rules"
-	>
-		⚙️
+<div class="flex w-[22rem] max-w-[calc(100vw-2rem)] flex-col items-center">
+	<p class="eyebrow pb-2">Room code</p>
+	<button class="group pb-1" onclick={copyCode} title="copy to clipboard">
+		<span class="code">{v.gameId}</span>
+	</button>
+	<p class="pb-4 text-xs text-light/45">{copied ? 'Copied!' : 'Tap to copy the code'}</p>
+	<button class="btn mb-6" onclick={shareInvite}>
+		{linkCopied ? '✓ Invite link copied' : '🔗 Invite friends'}
 	</button>
 
-	<h1 class="pt-4 text-2xl font-bold">Waiting for players…</h1>
-	<button class="group mx-auto block p-4" onclick={copyCode} title="copy to clipboard">
-		<span class="font-mono text-4xl font-bold tracking-widest text-primary">{v.gameId}</span>
-		<span class="block text-xs text-gray-400">
-			{copied ? 'copied!' : 'share this code — click to copy'}
-		</span>
-	</button>
-
-	<ul class="mx-auto w-5/6 border-t py-4">
-		{#each v.players as player (player.id)}
-			<li class="py-1 font-semibold">
-				{player.isBot ? '🤖 ' : ''}{player.name}
-				{player.id === v.hostId ? '👑' : ''}
-				{player.id === v.selfId ? '(you)' : ''}
-			</li>
-		{/each}
-	</ul>
-	<div class="p-4 pt-0">
-		{#if isHost}
-			<button
-				onclick={() => client.send({ method: 'start' })}
-				disabled={v.players.length < 2}
-				class="w-full rounded bg-primary p-2 text-white disabled:cursor-not-allowed disabled:bg-gray-400"
-			>
-				{v.players.length < 2 ? 'Need at least 2 players' : 'Start Game'}
+	<div class="panel w-full p-5">
+		<div class="flex items-center justify-between pb-3">
+			<h1 class="text-lg font-bold">Players <span class="text-light/40">{v.players.length}/{MAX_PLAYERS}</span></h1>
+			<button class="btn btn-muted px-3! py-1.5! text-xs!" onclick={() => (showRules = true)}>
+				⚙ House rules
 			</button>
-		{:else}
-			<p class="text-sm text-gray-500">The host starts the game</p>
-		{/if}
+		</div>
+
+		<ul class="flex flex-col gap-1.5">
+			{#each v.players as player, i (player.id)}
+				<li class="player flex items-center gap-3 rounded-xl bg-ink/60 px-3 py-2" style:animation-delay="{i * 60}ms">
+					<span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-panel-raised text-sm font-bold text-secondary shadow-[0_2px_0_var(--color-panel-edge)]">
+						{player.isBot ? '🤖' : player.name.slice(0, 1).toUpperCase()}
+					</span>
+					<span class="truncate font-semibold">{player.name}</span>
+					{#if player.id === v.selfId}<span class="text-sm text-light/40">(you)</span>{/if}
+					{#if player.id === v.hostId}<span class="ml-auto text-xs font-bold text-gold">👑 Host</span>{/if}
+				</li>
+			{/each}
+			{#each { length: Math.max(0, 2 - v.players.length) }, i (i)}
+				<li class="flex items-center gap-3 rounded-xl border border-dashed border-white/10 px-3 py-2 text-sm text-light/30">
+					<span class="h-8 w-8 rounded-lg border border-dashed border-white/10"></span>
+					waiting for a player…
+				</li>
+			{/each}
+		</ul>
+
+		<div class="pt-5">
+			{#if isHost}
+				<button
+					onclick={() => client.send({ method: 'start' })}
+					disabled={v.players.length < 2}
+					class="btn btn-gold w-full"
+				>
+					{v.players.length < 2 ? 'Need at least 2 players' : 'Deal the cards'}
+				</button>
+			{:else}
+				<p class="text-center text-sm text-light/45">The host starts the game</p>
+			{/if}
+		</div>
 	</div>
+	<div class="pt-4"><LeaveButton label="Back to main menu" /></div>
 </div>
 
 {#if showRules}
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-		<button class="absolute inset-0 bg-black/40" aria-label="close rules" onclick={closeRules}
+		<button class="absolute inset-0 bg-ink/75 backdrop-blur-sm" aria-label="close rules" onclick={closeRules}
 		></button>
 		<div
-			class="relative max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 text-left shadow-2xl"
+			class="panel dialog relative max-h-[90dvh] w-full max-w-2xl overflow-y-auto p-5 text-left sm:p-6"
 			role="dialog"
 			aria-label="game rules"
 		>
 			<div class="flex items-baseline justify-between pb-1">
-				<h2 class="text-lg font-bold">Game rules</h2>
+				<h2 class="text-xl font-bold">House rules</h2>
 				<button
-					class="rounded-full px-2 py-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+					class="grid h-8 w-8 place-items-center rounded-lg text-light/40 hover:bg-white/5 hover:text-light"
 					onclick={closeRules}
 					aria-label="close"
 				>
 					✕
 				</button>
 			</div>
-			<p class="pb-3 text-xs text-gray-400">
+			<p class="pb-4 text-xs text-light/45">
 				{isHost ? 'You are the host — your changes apply for everyone.' : 'Only the host can change the rules.'}
 			</p>
 
-			<div class="grid gap-x-10 gap-y-4 sm:grid-cols-2">
+			<div class="grid gap-x-10 gap-y-5 sm:grid-cols-2">
 				{#each SECTIONS as section (section.title)}
 					<section>
-						<h3 class="border-b pb-1 text-xs font-bold tracking-wide text-gray-500 uppercase">
+						<h3 class="eyebrow border-b border-white/10 pb-1.5 text-secondary!">
 							{section.title}
 						</h3>
 						{#each section.rules as rule (rule.key)}
-							<div class="relative pt-2.5">
-								<div class="flex items-center gap-1">
-									<span class="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">
+							<div class="relative pt-3">
+								<div class="flex items-center gap-1.5">
+									<span class="text-xs font-semibold text-light/70">
 										{rule.label}
 									</span>
 									<button
-										class="grid h-4 w-4 place-items-center rounded-full text-[10px] leading-none
-											{openInfo === rule.key ? 'bg-primary text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}"
+										class="grid h-4 w-4 place-items-center rounded text-[10px] leading-none font-bold
+											{openInfo === rule.key ? 'bg-primary text-white' : 'bg-white/10 text-light/50 hover:bg-white/20'}"
 										onclick={() => (openInfo = openInfo === rule.key ? null : rule.key)}
 										aria-label="explain {rule.label}"
 									>
@@ -211,14 +244,13 @@
 								</div>
 								{#if openInfo === rule.key}
 									<div
-										class="absolute inset-x-0 top-8 z-10 rounded-lg bg-dark p-2.5 text-xs leading-relaxed text-white shadow-lg"
+										class="absolute inset-x-0 top-9 z-10 rounded-lg border border-white/10 bg-panel-raised p-3 text-xs leading-relaxed text-light/85 shadow-xl"
 									>
 										{rule.info}
 									</div>
 								{/if}
 								<select
-									class="mt-1 w-full truncate rounded border border-gray-200 bg-white px-1.5 py-1.5 text-xs
-										disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
+									class="field mt-1.5 w-full truncate py-1.5! text-xs"
 									disabled={!isHost}
 									onchange={(e) => setRule(rule.key, e.currentTarget.value)}
 								>
@@ -239,3 +271,33 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.code {
+		display: block;
+		font-family: ui-monospace, monospace;
+		font-size: 3.5rem;
+		font-weight: 800;
+		line-height: 1;
+		letter-spacing: 0.25em;
+		margin-right: -0.25em;
+		color: var(--color-gold);
+		text-shadow: 0 4px 0 var(--color-gold-deep);
+		transition: scale 150ms;
+	}
+	.group:hover .code {
+		scale: 1.04;
+	}
+	.player {
+		animation: rise 360ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+	}
+	.dialog {
+		animation: rise 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+	}
+	@keyframes rise {
+		from {
+			opacity: 0;
+			translate: 0 12px;
+		}
+	}
+</style>

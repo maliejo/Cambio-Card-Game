@@ -26,7 +26,8 @@ pnpm start   # serves the built app + game server on PORT (default 3000)
 - `src/lib/server/ws.ts` — WebSocket transport: rooms, message routing, per-player redacted state broadcasts (you never receive another player's card faces — or your own, memory is the game).
 - `src/lib/shared/types.ts` — the protocol (client/server messages, view types) shared by both sides.
 - `src/lib/client/game.svelte.ts` — Svelte 5 runes store holding the socket and the latest server state.
-- `src/lib/components/` — lobby, table, seats, hands. Cards are rendered from the [svg-cards](https://www.npmjs.com/package/svg-cards) deck via `<use href>`. Card movements are animated by `FlyingCards.svelte` from server-emitted move events.
+- `src/lib/components/` — lobby, table, seats, hands. Cards are drawn in code (`cards/CardFace.svelte`, with shared suit shapes in `cards/CardDefs.svelte`). Card movements are animated by `FlyingCards.svelte` from server-emitted move events.
+- `src/lib/client/fx.svelte.ts` + `sfx.svelte.ts` — the purely cosmetic layer: banners, sparks, shakes and synthesized Web Audio sound effects (no audio files), derived from the moves and state changes the server already sends.
 
 ## Rules
 

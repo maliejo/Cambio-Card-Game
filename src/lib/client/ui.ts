@@ -1,5 +1,8 @@
 import { client } from './game.svelte';
 
+/** Width : height of a card. */
+export const CARD_RATIO = 5 / 7;
+
 /** How a player sits relative to me: 180 = across the table, 90 = left edge, -90 = right edge. */
 export type Orientation = 0 | 90 | 180 | -90;
 

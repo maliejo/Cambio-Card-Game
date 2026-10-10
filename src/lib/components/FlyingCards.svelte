@@ -1,11 +1,9 @@
 <script lang="ts">
 	import { client, type Flight } from '$lib/client/game.svelte';
+	import { CARD_RATIO as RATIO } from '$lib/client/ui';
 	import PlayingCard from './PlayingCard.svelte';
 
 	const faceKey = (c: Flight['card']) => (c === 'hidden' ? 'back' : c.rank + c.suit);
-
-	/** Portrait card width inside a sideways (landscape) slot box — see Hand's 71.43%. */
-	const RATIO = 5 / 7;
 
 	/**
 	 * The flyer is always a portrait card. A rotated endpoint holds its card a
@@ -35,6 +33,7 @@
 		// like svelte's crossfade: duration follows the travelled distance
 		const duration = Math.min(900, 300 + Math.sqrt(dx * dx + dy * dy) * 0.9);
 		const easing = 'cubic-bezier(0.22, 1, 0.36, 1)';
+		const delay = flight.delayMs;
 		const animation = node.animate(
 			[
 				{ transform: 'translate(0px, 0px) scale(1)', offset: 0 },
@@ -44,14 +43,25 @@
 				},
 				{ transform: `translate(${dx}px, ${dy}px) scale(${scale})`, offset: 1 }
 			],
-			{ duration, easing, fill: 'forwards' }
+			{ duration, delay, easing, fill: 'both' }
 		);
-		animation.onfinish = () => client.endFlight(flight.id);
+		animation.onfinish = () => client.endFlight(flight);
+
+		// the card swings into its direction of travel and lifts off the table on the way
+		const swing = Math.max(-14, Math.min(14, dx / 25));
+		const swingAnimation = (node.firstElementChild as HTMLElement | null)?.animate(
+			[
+				{ rotate: '0deg', filter: 'drop-shadow(0 2px 3px rgb(0 0 0 / 0.4))' },
+				{ rotate: `${swing}deg`, filter: 'drop-shadow(0 18px 14px rgb(0 0 0 / 0.45))', offset: 0.45 },
+				{ rotate: '0deg', filter: 'drop-shadow(0 2px 3px rgb(0 0 0 / 0.4))' }
+			],
+			{ duration, delay, easing: 'ease-in-out' }
+		);
 
 		// turning over and quarter turns both happen IN the air: the face swaps
 		// edge-on at the middle of the flight, the rotation eases in throughout,
 		// and the card lands exactly as its destination slot holds it
-		const inner = node.firstElementChild as HTMLElement | null;
+		const inner = node.firstElementChild?.firstElementChild as HTMLElement | null;
 		const turns = faceKey(flight.card) !== faceKey(flight.toCard);
 		const spins = flight.fromAngle !== flight.toAngle;
 		let flipAnimation: Animation | undefined;
@@ -70,14 +80,15 @@
 							{ transform: `rotate(${flight.fromAngle}deg)` },
 							{ transform: `rotate(${flight.toAngle}deg)` }
 						],
-				{ duration, easing: turns ? 'linear' : easing, fill: 'forwards' }
+				{ duration, delay, easing: turns ? 'linear' : easing, fill: 'both' }
 			);
-			if (turns) flipTimer = setTimeout(() => (flight.card = flight.toCard), duration / 2);
+			if (turns) flipTimer = setTimeout(() => (flight.card = flight.toCard), delay + duration / 2);
 		}
 
 		return {
 			destroy: () => {
 				animation.cancel();
+				swingAnimation?.cancel();
 				flipAnimation?.cancel();
 				clearTimeout(flipTimer);
 			}
@@ -88,18 +99,20 @@
 {#each client.flights as flight (flight.id)}
 	{@const g = geo(flight)}
 	<div
-		class="pointer-events-none fixed z-50 origin-top-left drop-shadow-xl [perspective:600px]"
+		class="pointer-events-none fixed z-50 origin-top-left"
 		style:left="{g.left}px"
 		style:top="{g.top}px"
 		style:width="{g.w}px"
 		use:fly={flight}
 	>
-		<div>
-			<!-- keyed so the mid-flight face swap replaces the card instead of
-				 triggering PlayingCard's own (competing) flip animation -->
-			{#key faceKey(flight.card)}
-				<PlayingCard card={flight.card} />
-			{/key}
+		<div class="[perspective:600px]">
+			<div>
+				<!-- keyed so the mid-flight face swap replaces the card instead of
+					 triggering PlayingCard's own (competing) flip animation -->
+				{#key faceKey(flight.card)}
+					<PlayingCard card={flight.card} />
+				{/key}
+			</div>
 		</div>
 	</div>
 {/each}
